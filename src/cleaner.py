@@ -95,13 +95,30 @@ class EpubCleaner:
         # href is needed for links (external).
 
         for tag in self.soup.find_all(True):
-            # We want to remove 'style', 'class', 'width', 'height' usually
-            # But markdownify might use 'class' for code blocks logic.
-            # Let's be conservative: remove 'style' definitely.
-            if "style" in tag.attrs:
-                del tag.attrs["style"]
+            # 1. Remove style, width, height (Pure visual noise)
+            for attr in ["style", "width", "height", "cellspacing", "cellpadding", "border"]:
+                if attr in tag.attrs:
+                    del tag.attrs[attr]
 
-            # Remove event handlers
+            # 2. Remove 'class' except for code blocks (preserve syntax highlighting hints)
+            if "class" in tag.attrs:
+                # If it's not a code block, strip classes to reduce noise
+                if tag.name not in ["code", "pre"]:
+                    del tag.attrs["class"]
+
+            # 3. Remove 'id' (We don't support internal anchors in final MD to output cleaner context)
+            if "id" in tag.attrs:
+                del tag.attrs["id"]
+
+            # 4. Remove event handlers (security)
             attrs_to_remove = [key for key in tag.attrs if key.startswith("on")]
             for key in attrs_to_remove:
                 del tag.attrs[key]
+
+            # 5. Filter remaining attributes to whitelist
+            # keys = list(tag.attrs.keys())
+            # for key in keys:
+            #     if key not in allowed_attributes and key != "class":
+            #         del tag.attrs[key] 
+            # (Commented out: strict whitelisting might be too aggressive for now, 
+            # let's stick to blacklisting common noise)

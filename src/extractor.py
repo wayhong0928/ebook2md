@@ -1,7 +1,23 @@
 import ebooklib
 from ebooklib import epub
 import os
+import warnings
 
+# --- Monkey Patch: Make EpubReader lenient to missing files ---
+# Many EPUBs have manifest entries (like CSS/Images) that don't exist in the zip.
+# Standard ebooklib crashes on these. We patch it to return empty bytes instead.
+_original_read_file = epub.EpubReader.read_file
+
+def _lenient_read_file(self, name):
+    try:
+        return _original_read_file(self, name)
+    except KeyError:
+        # Log warning but don't crash
+        print(f"⚠️ Warning: EPUB Manifest references missing file: {name} (Skipping)")
+        return b"" 
+
+epub.EpubReader.read_file = _lenient_read_file
+# -----------------------------------------------------------
 
 class EpubExtractor:
     def __init__(self, epub_path):
