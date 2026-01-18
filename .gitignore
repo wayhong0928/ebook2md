@@ -3,7 +3,6 @@ books/
 *.mobi
 *.pdf
 output/
-*.md
 venv/
 __pycache__/
 .DS_Store
