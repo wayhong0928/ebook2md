@@ -337,6 +337,38 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     new_card_titles = {_safe_title(c["title"]) for c in data.get("concept_cards", [])}
     known_concepts = new_card_titles | {p.stem for p in concepts_dir.glob("*.md")}
 
+    # Re-apply guard: if this book already went through Phase 2 before (status
+    # already notes_generated), a prior run may have left concept cards behind
+    # that this run's notes_results.json no longer produces — e.g. an earlier
+    # partial/truncated run (old chapter cap, batch failure) generated cards
+    # under slightly different titles that a later full run doesn't repeat.
+    # apply_notes() only ever creates/overwrites cards, it never deletes, so
+    # these silently pile up as orphaned near-duplicates (see 2026-08 vault
+    # audit: 9 books double-applied, 44 concept cards for one book alone).
+    # We don't auto-delete — a human may have hand-edited an old card — but we
+    # surface the list loudly, both on stdout and in the activity log, so the
+    # gap is visible the moment it's created instead of months later.
+    if entry.get("status") == "notes_generated":
+        source_pat = re.compile(r'source_book:\s*"\[\[(.*?)\]\]"')
+        book_title_guess = classification.get("title") or book_id
+        existing_for_book = []
+        for p in concepts_dir.glob("*.md"):
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            m = source_pat.search(text)
+            if m and m.group(1) == book_title_guess:
+                existing_for_book.append(p.stem)
+        stale = sorted(set(existing_for_book) - new_card_titles)
+        if stale:
+            print(f"  [warn]     re-applying to a book already marked notes_generated;")
+            print(f"             {len(stale)} existing concept card(s) are NOT in this run's output")
+            print(f"             (may be orphans from a prior partial/duplicate run — review manually):")
+            for t in stale:
+                print(f"               - {t}")
+            record_book_action("stale_concepts_on_reapply", book_id, {"titles": stale})
+
     # 1. Update 書籍筆記 in 10_Books/ (create if deleted or missing)
     if entry.get("obsidian_card"):
         card_path = Path(entry["obsidian_card"])
