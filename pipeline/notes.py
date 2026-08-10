@@ -119,7 +119,10 @@ def _slice_from_md(md_text: str) -> list[dict]:
 # prepare_notes
 # ---------------------------------------------------------------------------
 
-def prepare_notes(book_id: str, max_chapters: int | None = None) -> Path | None:
+def prepare_notes(book_id: str, max_chapters: int | None = None, tag: str | None = None) -> Path | None:
+    """tag: optional namespace so multiple books can run prepare-notes/split-notes/
+    merge-notes in parallel without overwriting each other's fixed-name files
+    (pending_notes.json etc). Omit for the original single-book behavior."""
     manifest = load_manifest()
     entry = manifest["books"].get(book_id)
     if not entry:
@@ -161,18 +164,19 @@ def prepare_notes(book_id: str, max_chapters: int | None = None) -> Path | None:
         "chapters": chapters,
     }
 
-    PENDING_NOTES_FILE.write_text(
+    out_path = PIPELINE_DIR / f"pending_notes_{tag}.json" if tag else PENDING_NOTES_FILE
+    out_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     record_book_action("notes_prepared", book_id, {
         "chapters": len(chapters), "source": source_used,
     })
 
-    print(f"\nReady: {PENDING_NOTES_FILE}")
+    print(f"\nReady: {out_path}")
     print(f"  {len(chapters)} chapters ({source_used})")
     print("\nAsk Claude Code:")
-    print('  "請讀 pipeline/pending_notes.json，幫我生成書籍筆記，輸出到 pipeline/notes_results.json"')
-    return PENDING_NOTES_FILE
+    print(f'  "請讀 {out_path.relative_to(PIPELINE_DIR.parent)}，幫我生成書籍筆記，輸出到 pipeline/notes_results{"_" + tag if tag else ""}.json"')
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -187,19 +191,28 @@ DEFAULT_MAX_CHARS_PER_BATCH = 150_000
 
 
 def split_pending_notes(
-    pending_path: Path = PENDING_NOTES_FILE,
+    pending_path: Path | None = None,
     max_chars_per_batch: int = DEFAULT_MAX_CHARS_PER_BATCH,
+    tag: str | None = None,
 ) -> list[Path]:
     """
     Split a prepared pending_notes.json into N batch files
-    (pending_notes_batch1.json, batch2.json, ...) if its total content
+    (pending_notes_batch1.json, batch2.json, ... or, with tag, the
+    pending_notes_{tag}_batch{N}.json equivalents) if its total content
     exceeds max_chars_per_batch. Each batch keeps chapters contiguous
     (never splits a chapter across batches) and carries the same book-level
     metadata plus batch_num/total_batches for traceability.
 
+    tag: same namespacing as prepare_notes()'s tag — lets multiple books run
+    split-notes/merge-notes in parallel without clobbering each other's
+    fixed-name batch files. Omit for the original single-book behavior.
+
     Returns the list of batch file paths (length 1 if no split was needed —
-    the single path is still pending_notes.json itself, unchanged).
+    the single path is still the (possibly tagged) pending_notes file itself,
+    unchanged).
     """
+    if pending_path is None:
+        pending_path = (PIPELINE_DIR / f"pending_notes_{tag}.json") if tag else PENDING_NOTES_FILE
     data = json.loads(pending_path.read_text(encoding="utf-8"))
     chapters = data["chapters"]
     total_chars = sum(c["char_count"] for c in chapters)
@@ -229,7 +242,8 @@ def split_pending_notes(
             "total_batches": len(batches),
             "chapters": batch_chapters,
         }
-        batch_path = PIPELINE_DIR / f"pending_notes_batch{i}.json"
+        suffix = f"_{tag}_batch{i}" if tag else f"_batch{i}"
+        batch_path = PIPELINE_DIR / f"pending_notes{suffix}.json"
         batch_path.write_text(
             json.dumps(batch_payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -244,21 +258,30 @@ def split_pending_notes(
         n_ch = len(batches[i - 1])
         n_chars = sum(c["char_count"] for c in batches[i - 1])
         print(f"  {p.name}: {n_ch} chapters, {n_chars} chars")
+    result_suffix = f"_{tag}_batch" if tag else "_batch"
     print("\nAsk Claude Code to generate each batch (parallel subagents OK, cap ~3 at once),")
-    print('each writing to notes_results_batch{N}.json, then run:')
-    print("  python pipeline/run_pipeline.py merge-notes --book-id \"<id>\" --batches " + str(len(batches)))
+    print(f'each writing to notes_results{result_suffix}{{N}}.json, then run:')
+    tag_flag = f' --tag "{tag}"' if tag else ""
+    print(f'  python pipeline/run_pipeline.py merge-notes --book-id "<id>" --batches {len(batches)}{tag_flag}')
     return paths
 
 
-def merge_notes_results(book_id: str, num_batches: int) -> Path:
+def merge_notes_results(book_id: str, num_batches: int, tag: str | None = None) -> Path:
     """
-    Merge notes_results_batch1.json..batchN.json (each in the same
+    Merge notes_results_batch1.json..batchN.json (or, with tag, the
+    notes_results_{tag}_batch{N}.json equivalents — each in the same
     {book_id, book_summary, chapters, concept_cards} shape as a normal
-    notes_results.json) into a single NOTES_RESULTS_FILE ready for
-    apply_notes(). Chapters are concatenated and sorted by chapter_num.
-    Concept cards are deduped by title (first occurrence wins — later
-    batches redefining the same concept are dropped, not overwritten,
-    since parallel subagents can't see each other's output while working).
+    notes_results.json) into a single merged file ready for apply_notes().
+    Chapters are concatenated and sorted by chapter_num. Concept cards are
+    deduped by title (first occurrence wins — later batches redefining the
+    same concept are dropped, not overwritten, since parallel subagents
+    can't see each other's output while working).
+
+    tag: same namespacing as prepare_notes()/split_pending_notes() — reads
+    the tagged batch files and writes notes_results_{tag}.json instead of
+    the fixed NOTES_RESULTS_FILE, so parallel books don't collide. Pass the
+    returned path to `apply-notes --input <path>`. Omit tag for the original
+    single-book behavior (writes NOTES_RESULTS_FILE, as before).
     """
     all_chapters: list[dict] = []
     all_cards: list[dict] = []
@@ -266,8 +289,9 @@ def merge_notes_results(book_id: str, num_batches: int) -> Path:
     summaries: list[str] = []
     dropped_duplicate_cards = 0
 
+    batch_suffix = f"_{tag}_batch" if tag else "_batch"
     for i in range(1, num_batches + 1):
-        batch_result_path = PIPELINE_DIR / f"notes_results_batch{i}.json"
+        batch_result_path = PIPELINE_DIR / f"notes_results{batch_suffix}{i}.json"
         if not batch_result_path.exists():
             raise FileNotFoundError(f"Missing batch result: {batch_result_path}")
         d = json.loads(batch_result_path.read_text(encoding="utf-8"))
@@ -290,16 +314,19 @@ def merge_notes_results(book_id: str, num_batches: int) -> Path:
         "chapters": all_chapters,
         "concept_cards": all_cards,
     }
-    NOTES_RESULTS_FILE.write_text(
+    out_path = (PIPELINE_DIR / f"notes_results_{tag}.json") if tag else NOTES_RESULTS_FILE
+    out_path.write_text(
         json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     log.info(
         "Merged %d batch(es) for %s: %d chapters, %d concept cards (%d duplicate titles dropped)",
         num_batches, book_id, len(all_chapters), len(all_cards), dropped_duplicate_cards,
     )
-    print(f"\nMerged {num_batches} batch(es) -> {NOTES_RESULTS_FILE}")
+    print(f"\nMerged {num_batches} batch(es) -> {out_path}")
     print(f"  {len(all_chapters)} chapters, {len(all_cards)} concept cards ({dropped_duplicate_cards} duplicate titles dropped)")
-    return NOTES_RESULTS_FILE
+    if tag:
+        print(f'  Apply with: python pipeline/run_pipeline.py apply-notes --input "{out_path}"')
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +429,86 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     })
     print(f"  [ok] {book_id}: notes_generated")
     return True
+
+
+# ---------------------------------------------------------------------------
+# stale_review — companion to apply_notes()'s stale-concept-card warning.
+# Ranks each pre-existing "orphan" card (title not in this run's output)
+# against every card this run *did* produce, by textual similarity of both
+# definition and source_quote. Exact-title matching alone misses reworded
+# duplicates (see CLAUDE.md 孤兒卡review lesson, 2026-08-09) — this makes that
+# comparison a reusable command instead of a hand-rolled script each time.
+# Read-only: never edits or deletes any file. Merge/redirect decisions stay
+# with a human (or Claude) reading the actual card content, not this script.
+# ---------------------------------------------------------------------------
+
+def stale_review(book_id: str, results_path: Path = NOTES_RESULTS_FILE, top_n: int = 3) -> list[dict]:
+    from difflib import SequenceMatcher
+
+    manifest = load_manifest()
+    entry = manifest["books"].get(book_id, {})
+    classification = entry.get("classification", {})
+    book_title_guess = classification.get("title") or book_id
+
+    data = json.loads(results_path.read_text(encoding="utf-8"))
+    new_cards = {
+        _safe_title(c["title"]): (c.get("definition", ""), c.get("source_quote", ""))
+        for c in data.get("concept_cards", [])
+    }
+
+    concepts_dir = VAULT_ROOT / "20_Concepts"
+    source_pat = re.compile(r'source_book:\s*"\[\[(.*?)\]\]"')
+    def_pat = re.compile(r'## 定義\s*\n(.*?)(?=\n##|\Z)', re.S)
+    quote_pat = re.compile(r'## 原文\s*\n>\s*(.*?)(?=\n##|\Z)', re.S)
+
+    results = []
+    for p in concepts_dir.glob("*.md"):
+        if p.stem in new_cards:
+            continue  # this run itself (re)wrote it — not a stale candidate
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        m = source_pat.search(text)
+        if not (m and m.group(1) == book_title_guess):
+            continue
+
+        dm, qm = def_pat.search(text), quote_pat.search(text)
+        old_def = dm.group(1).strip() if dm else ""
+        old_quote = qm.group(1).strip() if qm else ""
+
+        scored = []
+        for nt, (ndef, nquote) in new_cards.items():
+            r_def = SequenceMatcher(None, old_def, ndef).ratio()
+            r_quote = SequenceMatcher(None, old_quote, nquote).ratio() if old_quote and nquote else 0.0
+            scored.append({"score": max(r_def, r_quote), "def_score": r_def, "quote_score": r_quote,
+                           "candidate_title": nt, "candidate_definition": ndef})
+        scored.sort(key=lambda s: s["score"], reverse=True)
+
+        results.append({
+            "stale_title": p.stem,
+            "stale_definition": old_def,
+            "top_candidates": scored[:top_n],
+        })
+
+    results.sort(key=lambda r: r["top_candidates"][0]["score"] if r["top_candidates"] else 0, reverse=True)
+    return results
+
+
+def print_stale_review(book_id: str, results_path: Path = NOTES_RESULTS_FILE) -> None:
+    rows = stale_review(book_id, results_path)
+    if not rows:
+        print(f"\n沒有找到《{book_id}》的孤兒卡候選（可能這本書不是重跑，或這次輸出涵蓋了全部既有標題）。")
+        return
+    print(f"\n=== 孤兒卡review候選：{book_id}（{len(rows)}張既有卡不在這次輸出中）===")
+    print("依最高相似度分數排序，分數高不代表一定是重複，仍需人工讀原文確認再決定合併／保留。\n")
+    for r in rows:
+        print(f"[舊卡] {r['stale_title']}")
+        print(f"  定義: {r['stale_definition'][:80]}")
+        for c in r["top_candidates"]:
+            print(f"    候選[def={c['def_score']:.2f} quote={c['quote_score']:.2f}] "
+                  f"{c['candidate_title']}: {c['candidate_definition'][:60]}")
+        print()
 
 
 # ---------------------------------------------------------------------------

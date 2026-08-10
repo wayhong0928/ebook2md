@@ -40,7 +40,7 @@ from convert import convert_batch, convert_one
 from classify import prepare_batch, apply_batch, RESULTS_FILE
 from create_book_card import create_card, create_cards_batch
 from sync import reclassify, move_from_inbox
-from notes import prepare_notes, apply_notes, split_pending_notes, merge_notes_results, NOTES_RESULTS_FILE
+from notes import prepare_notes, apply_notes, split_pending_notes, merge_notes_results, print_stale_review, NOTES_RESULTS_FILE
 
 log = get_logger("pipeline")
 
@@ -150,7 +150,7 @@ def cmd_prepare_notes(args):
     if not args.book_id:
         print("Error: --book-id required", file=sys.stderr)
         sys.exit(1)
-    prepare_notes(args.book_id, max_chapters=args.max_chapters)
+    prepare_notes(args.book_id, max_chapters=args.max_chapters, tag=args.tag)
 
 
 def cmd_apply_notes(args):
@@ -165,14 +165,23 @@ def cmd_apply_notes(args):
 
 
 def cmd_split_notes(args):
-    split_pending_notes(max_chars_per_batch=args.max_chars)
+    split_pending_notes(max_chars_per_batch=args.max_chars, tag=args.tag)
 
 
 def cmd_merge_notes(args):
     if not args.book_id:
         print("Error: --book-id required", file=sys.stderr)
         sys.exit(1)
-    merge_notes_results(args.book_id, args.batches)
+    merge_notes_results(args.book_id, args.batches, tag=args.tag)
+
+
+def cmd_stale_review(args):
+    from pathlib import Path
+    results_path = Path(args.input) if args.input else NOTES_RESULTS_FILE
+    if not results_path.exists():
+        print(f"\nNotes results not found: {results_path}")
+        sys.exit(1)
+    print_stale_review(args.book_id, results_path)
 
 
 def cmd_log(args):
@@ -286,6 +295,8 @@ def main():
     p_prep_notes.add_argument("--book-id", required=True, metavar="ID")
     p_prep_notes.add_argument("--max-chapters", type=int, default=None, metavar="N",
                               help="限制章節數（預設不限制，整本書都會處理；只有轉檔異常大量章節時才需要用這個暫時限縮）")
+    p_prep_notes.add_argument("--tag", default=None, metavar="TAG",
+                              help="平行處理多本書時，用書名縮寫當tag避免檔名衝突（輸出變成pending_notes_{tag}.json）")
 
     # apply-notes
     p_apply_notes = sub.add_parser("apply-notes", help="Apply Claude Code's generated notes to Obsidian")
@@ -296,11 +307,21 @@ def main():
     p_split_notes = sub.add_parser("split-notes", help="Split a large pending_notes.json into per-batch files for multiple subagents")
     p_split_notes.add_argument("--max-chars", type=int, default=150_000, metavar="N",
                                help="單一subagent批次的字元上限（預設150,000）")
+    p_split_notes.add_argument("--tag", default=None, metavar="TAG",
+                               help="平行處理多本書時，用書名縮寫當tag避免檔名衝突（需與同一次prepare-notes/merge-notes的--tag一致）")
 
     # merge-notes
     p_merge_notes = sub.add_parser("merge-notes", help="Merge notes_results_batch{N}.json files back into one notes_results.json")
     p_merge_notes.add_argument("--book-id", required=True, metavar="ID")
     p_merge_notes.add_argument("--batches", type=int, required=True, metavar="N")
+    p_merge_notes.add_argument("--tag", default=None, metavar="TAG",
+                               help="平行處理多本書時，用書名縮寫當tag避免檔名衝突（需與同一次prepare-notes/split-notes的--tag一致）")
+
+    # stale-review
+    p_stale_review = sub.add_parser("stale-review", help="孤兒卡review：依定義+原文相似度，排序既有卡與這次輸出的候選對應關係（唯讀，不修改任何檔案）")
+    p_stale_review.add_argument("--book-id", required=True, metavar="ID")
+    p_stale_review.add_argument("--input", metavar="PATH",
+                                help="Notes results JSON（預設 pipeline/notes_results.json）")
 
     # reclassify
     p_reclassify = sub.add_parser("reclassify", help="Move book to a different category (3-file sync)")
@@ -335,6 +356,7 @@ def main():
         "apply-notes": cmd_apply_notes,
         "split-notes": cmd_split_notes,
         "merge-notes": cmd_merge_notes,
+        "stale-review": cmd_stale_review,
         "reclassify": cmd_reclassify,
         "inbox-move": cmd_inbox_move,
         "log": cmd_log,
