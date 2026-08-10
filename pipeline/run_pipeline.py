@@ -18,6 +18,19 @@ import argparse
 import sys
 from pathlib import Path
 
+# Windows terminals often default to the cp950/cp936 codepage, which cannot
+# encode rare CJK characters (e.g. "〇") that show up in some book titles.
+# That previously crashed print()/log calls mid-command (see CLAUDE.md
+# "書名／檔名含罕見中文字元...cp950 codepage 無法編碼而崩潰"). Force UTF-8
+# on stdout/stderr so callers no longer need to remember a PYTHONIOENCODING
+# prefix by hand.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from logger import get_logger
