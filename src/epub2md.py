@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import datetime
 from extractor import EpubExtractor
 from cleaner import EpubCleaner
@@ -28,6 +29,10 @@ def generate_markdown_content(epub_path):
     metadata = extractor.get_metadata()
     title = metadata["title"]
     author = metadata["author"]
+
+    if title == "Untitled Book":
+        # Avoid multiple metadata-less EPUBs colliding on the same generic filename.
+        title = os.path.splitext(os.path.basename(epub_path))[0]
 
     # Sanitize output filename
     # Need to import sanitize_filename or move it inside or outside
@@ -87,6 +92,7 @@ def generate_markdown_content(epub_path):
 def process_epub(epub_path, output_dir):
     """
     Main orchestration function.
+    Returns True on success, False on failure.
     """
     print(f"Processing: {epub_path}")
 
@@ -94,7 +100,7 @@ def process_epub(epub_path, output_dir):
         content, filename = generate_markdown_content(epub_path)
     except Exception as e:
         print(e)
-        return
+        return False
 
     output_path = os.path.join(output_dir, filename)
 
@@ -103,8 +109,10 @@ def process_epub(epub_path, output_dir):
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(content)
         print(f"Successfully converted to: {output_path}")
+        return True
     except Exception as e:
         print(f"Error writing output file: {e}")
+        return False
 
 
 def main():
@@ -131,7 +139,9 @@ def main():
             print(f"Error creating output directory: {e}")
             return
 
-    process_epub(args.epub_path, args.output_dir)
+    success = process_epub(args.epub_path, args.output_dir)
+    if not success:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

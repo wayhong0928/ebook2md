@@ -13,8 +13,8 @@ def _lenient_read_file(self, name):
         return _original_read_file(self, name)
     except KeyError:
         # Log warning but don't crash
-        print(f"⚠️ Warning: EPUB Manifest references missing file: {name} (Skipping)")
-        return b"" 
+        print(f"Warning: EPUB Manifest references missing file: {name} (Skipping)")
+        return b""
 
 epub.EpubReader.read_file = _lenient_read_file
 # -----------------------------------------------------------
@@ -39,11 +39,11 @@ class EpubExtractor:
         """
         # Get title
         titles = self.book.get_metadata("DC", "title")
-        title = titles[0][0] if titles else "Untitled Book"
+        title = (titles[0][0] if titles else None) or "Untitled Book"
 
         # Get author (creator)
         creators = self.book.get_metadata("DC", "creator")
-        author = creators[0][0] if creators else "Unknown Author"
+        author = (creators[0][0] if creators else None) or "Unknown Author"
 
         return {"title": title, "author": author}
 
