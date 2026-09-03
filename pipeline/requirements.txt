@@ -1,0 +1,6 @@
+EbookLib
+BeautifulSoup4
+markdownify
+Streamlit
+anthropic
+tqdm
