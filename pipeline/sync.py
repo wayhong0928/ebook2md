@@ -21,13 +21,13 @@ def _target_dir(base: Path, category: str, subfolder: str = "") -> Path:
 
 
 def _safe_move(src: Path, dst_dir: Path, dry_run: bool = False) -> Path:
-    dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / src.name
     if dst == src:
         return src
     if dry_run:
         log.debug("[dry-run] move: %s → %s", src, dst)
         return dst
+    dst_dir.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
     log.debug("Moved: %s → %s", src.name, dst_dir)
     return dst

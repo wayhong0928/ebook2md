@@ -28,7 +28,8 @@ def bold_classes(css: str) -> set[str]:
 
 
 def keep(t: str, headings: set[str]) -> bool:
-    if len(t) < 12 or t in headings:
+    t = t.strip()
+    if len(t) < 12 or t in headings or t.endswith(("，", ",")):
         return False
     # 推薦序的作者介紹「（本文作者為…）」與署名「──某某（頭銜）」
     if (t.startswith(("（", "(")) and t.endswith(("）", ")"))) or t.startswith(("──", "——", "—")):
@@ -39,16 +40,20 @@ def keep(t: str, headings: set[str]) -> bool:
 
 
 def from_epub(epub: Path) -> list[dict]:
-    z = zipfile.ZipFile(epub)
-    names = sorted(n for n in z.namelist() if n.lower().endswith((".xhtml", ".html", ".htm")))
-    css = "".join(z.read(n).decode("utf-8", "ignore") for n in z.namelist() if n.lower().endswith(".css"))
+    with zipfile.ZipFile(epub) as z:
+        names = sorted(n for n in z.namelist() if n.lower().endswith((".xhtml", ".html", ".htm")))
+        pages = {n: z.read(n).decode("utf-8", "ignore") for n in names}
+        css = "".join(z.read(n).decode("utf-8", "ignore") for n in z.namelist() if n.lower().endswith(".css"))
     bc = bold_classes(css)
+    headings = {
+        text_of(h).strip()
+        for html in pages.values()
+        for h in re.findall(r"<h[1-6]\b[^>]*>(.*?)</h[1-6]\s*>", html, re.S | re.I)
+    }
     out, seen = [], set()
-    for n in names:
-        html = z.read(n).decode("utf-8", "ignore")
+    for n, html in pages.items():
         # 內嵌 <style> 也算
         bc_local = bc | bold_classes("".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S)))
-        headings = {text_of(h) for h in re.findall(r"<h[1-6][^>]*>(.*?)</h[1-6]>", html, re.S)}
         spans = re.findall(r"<(?:strong|b)(?:\s[^>]*)?>(.*?)</(?:strong|b)>", html, re.S | re.I)
         if bc_local:
             cls_pat = "|".join(map(re.escape, bc_local))
@@ -61,10 +66,10 @@ def from_epub(epub: Path) -> list[dict]:
                 seen.add(t)
                 out.append({"source": "bold", "file": n, "text": t})
         # 小結類段落：標題命中後，收該檔接下來的段落（最多 6 段）
-        for m in re.finditer(r"<h[1-6][^>]*>(.*?)</h[1-6]>", html, re.S):
+        for m in re.finditer(r"<h[1-6]\b[^>]*>(.*?)</h[1-6]\s*>", html, re.S | re.I):
             if SUMMARY_HEAD.search(text_of(m.group(1))):
                 rest = html[m.end():]
-                nxt = re.search(r"<h[1-6][^>]*>", rest)
+                nxt = re.search(r"<h[1-6]\b[^>]*>", rest, re.I)
                 block = rest[: nxt.start()] if nxt else rest
                 for p in re.findall(r"<p[^>]*>(.*?)</p>", block, re.S)[:6]:
                     t = text_of(p)
@@ -83,16 +88,24 @@ def from_phase2(note: Path) -> list[dict]:
         q = re.search(r"#### 重點擷取\n(.*?)(?=\n#### )", body, re.S)
         if q:
             for line in re.findall(r"^> (.+)$", q.group(1), re.M):
-                if len(line) >= 12:
+                if len(line) >= 12 and not line.rstrip().endswith(("，", ",")):
                     out.append({"source": "phase2", "chapter": chap.strip(), "text": line.strip()})
     return out
+
+
+def generate_candidates(epub: Path, note: Path | None = None) -> dict:
+    cands = from_epub(epub)
+    if note is not None:
+        cands += from_phase2(note)
+    summary = {s: sum(1 for c in cands if c["source"] == s) for s in ("bold", "summary", "phase2")}
+    return {"epub": str(epub), "counts": summary, "candidates": cands}
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     epub = Path(sys.argv[1])
-    cands = from_epub(epub) if epub.exists() else []
-    if len(sys.argv) > 2:
-        cands += from_phase2(Path(sys.argv[2]))
-    summary = {s: sum(1 for c in cands if c["source"] == s) for s in ("bold", "summary", "phase2")}
-    print(json.dumps({"epub": str(epub), "counts": summary, "candidates": cands}, ensure_ascii=False, indent=1))
+    if epub.exists():
+        result = generate_candidates(epub, Path(sys.argv[2]) if len(sys.argv) > 2 else None)
+    else:
+        result = {"epub": str(epub), "counts": {s: 0 for s in ("bold", "summary", "phase2")}, "candidates": []}
+    print(json.dumps(result, ensure_ascii=False, indent=1))

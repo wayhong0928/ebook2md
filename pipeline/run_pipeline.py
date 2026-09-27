@@ -15,6 +15,9 @@ Other commands:
   python run_pipeline.py history --book-id "<id>"
 """
 import argparse
+import csv
+import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -41,6 +44,7 @@ from classify import prepare_batch, apply_batch, RESULTS_FILE
 from create_book_card import create_card, create_cards_batch
 from sync import reclassify, move_from_inbox
 from notes import prepare_notes, apply_notes, split_pending_notes, merge_notes_results, print_stale_review, NOTES_RESULTS_FILE
+from onepage_candidates import generate_candidates
 
 log = get_logger("pipeline")
 
@@ -131,12 +135,102 @@ def cmd_reclassify(args):
     if existing_classification:
         existing_classification = dict(existing_classification)
         existing_classification["category"] = args.category
+    if args.subfolder is not None or args.no_subfolder:
+        existing_classification = existing_classification or {"category": args.category}
+        existing_classification["subfolder_name"] = args.subfolder if args.subfolder is not None else ""
     reclassify(
         args.book_id,
         args.category,
         new_classification=existing_classification,
         dry_run=args.dry_run,
     )
+
+
+def cmd_onepage_candidates(args):
+    entry = load_manifest()["books"].get(args.book_id)
+    if not entry:
+        print(f"Book not found: {args.book_id}", file=sys.stderr)
+        sys.exit(1)
+    epub = Path(entry["epub_path"]) if entry.get("epub_path") else None
+    if not epub or not epub.is_file():
+        print(f"EPUB not found for: {args.book_id}", file=sys.stderr)
+        sys.exit(1)
+    note = None
+    if entry.get("status") == "notes_generated" and entry.get("obsidian_card"):
+        note = Path(entry["obsidian_card"])
+        if not note.is_file():
+            print(f"Obsidian note not found: {note}", file=sys.stderr)
+            sys.exit(1)
+    result = generate_candidates(epub, note)
+    output = json.dumps(result, ensure_ascii=False, indent=1)
+    if args.output:
+        Path(args.output).write_text(output + "\n", encoding="utf-8")
+        print(f"Wrote {len(result['candidates'])} candidates: {args.output}")
+    else:
+        print(output)
+
+
+def cmd_notebook_stage(args):
+    books = load_manifest()["books"]
+    try:
+        ids = [line.strip() for line in Path(args.books).read_text(encoding="utf-8").splitlines()
+               if line.strip() and not line.lstrip().startswith("#")]
+    except OSError as exc:
+        print(f"Cannot read book list: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    out_dir = Path(args.out)
+    csv_path = out_dir.parent / f"{out_dir.name}_對照表.csv"
+    rows = []
+    used_names = set()
+    staged = 0
+    for book_id in ids:
+        entry = books.get(book_id)
+        category = entry.get("category", "") if entry else ""
+        source = None
+        kind = ""
+        if entry:
+            for field, candidate_kind in (("md_path", "md"), ("pdf_path", "pdf")):
+                value = entry.get(field)
+                if value and Path(value).is_file():
+                    source, kind = Path(value), candidate_kind
+                    break
+        if source is None:
+            reason = "book_id 不在 manifest" if not entry else "md 與 pdf 路徑皆無可用檔案"
+            print(f"[error] {book_id}: {reason}", file=sys.stderr)
+            rows.append([book_id, category, "未放入", "", "", "", reason])
+            continue
+
+        name = source.name
+        if name in used_names or (out_dir / name).exists():
+            stem = source.stem
+            number = 2
+            while f"{stem}_{number}{source.suffix}" in used_names or (out_dir / f"{stem}_{number}{source.suffix}").exists():
+                number += 1
+            name = f"{stem}_{number}{source.suffix}"
+        used_names.add(name)
+        chars = len(source.read_text(encoding="utf-8")) if kind == "md" else ""
+        note = "超過 50 萬字，需手動切分" if kind == "md" and chars > 500_000 else ""
+        if note:
+            print(f"[warning] {book_id}: {note}", file=sys.stderr)
+        rows.append([book_id, category, name, str(source), f"{source.stat().st_size / 1024 / 1024:.2f}", chars, note])
+        staged += 1
+        print(f"{'[dry-run] would copy' if args.dry_run else 'copy'}: {source} -> {out_dir / name}")
+        if not args.dry_run:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, out_dir / name)
+
+    if staged > 50:
+        print(f"[warning] {staged} files exceed NotebookLM's 50-source limit per notebook", file=sys.stderr)
+    if args.dry_run:
+        print(f"[dry-run] would write {csv_path} ({len(rows)} rows); no files created")
+    else:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["書", "分類", "上傳檔", "來源路徑", "MB", "字數(md)", "說明"])
+            writer.writerows(rows)
+        print(f"Wrote comparison table: {csv_path}")
 
 
 def cmd_inbox_move(args):
@@ -327,7 +421,21 @@ def main():
     p_reclassify = sub.add_parser("reclassify", help="Move book to a different category (3-file sync)")
     p_reclassify.add_argument("--book-id", required=True, metavar="ID")
     p_reclassify.add_argument("--category", required=True, metavar="CAT")
+    subfolder_group = p_reclassify.add_mutually_exclusive_group()
+    subfolder_group.add_argument("--subfolder", metavar="NAME")
+    subfolder_group.add_argument("--no-subfolder", action="store_true")
     p_reclassify.add_argument("--dry-run", action="store_true")
+
+    # onepage-candidates
+    p_candidates = sub.add_parser("onepage-candidates", help="Generate one-page quote candidates")
+    p_candidates.add_argument("--book-id", required=True, metavar="ID")
+    p_candidates.add_argument("--output", metavar="PATH")
+
+    # notebook-stage
+    p_stage = sub.add_parser("notebook-stage", help="Copy selected MD/PDF files for NotebookLM")
+    p_stage.add_argument("--books", required=True, metavar="PATH")
+    p_stage.add_argument("--out", required=True, metavar="DIR")
+    p_stage.add_argument("--dry-run", action="store_true")
 
     # inbox-move
     p_inbox = sub.add_parser("inbox-move", help="Approve and move card from 00_Inbox to 10_Books")
@@ -358,6 +466,8 @@ def main():
         "merge-notes": cmd_merge_notes,
         "stale-review": cmd_stale_review,
         "reclassify": cmd_reclassify,
+        "onepage-candidates": cmd_onepage_candidates,
+        "notebook-stage": cmd_notebook_stage,
         "inbox-move": cmd_inbox_move,
         "log": cmd_log,
         "history": cmd_history,
