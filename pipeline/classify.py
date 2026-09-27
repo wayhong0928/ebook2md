@@ -21,7 +21,7 @@ from logger import get_logger
 from activity import record, record_book_action
 from manifest import (
     load_manifest, update_book,
-    count_books_by_field,
+    count_books_by_field, clean_name, existing_subfolder,
 )
 
 log = get_logger("classify")
@@ -106,12 +106,20 @@ def _enrich_with_subfolder(result: dict, manifest: dict) -> dict:
     author = result.get("author", "").strip()
     author_count = count_books_by_field("author", author, manifest)
     series_count = count_books_by_field("series", series, manifest) if series else 0
-    needs = (
+    needs = bool(
         (series and series_count >= SERIES_SUBFOLDER_THRESHOLD) or
         (author and author_count >= SERIES_SUBFOLDER_THRESHOLD)
     )
     result["needs_subfolder"] = needs
-    result["subfolder_name"] = (series or author) if needs else ""
+    result["subfolder_name"] = ""
+    if needs:
+        candidates = []
+        if series and series_count >= SERIES_SUBFOLDER_THRESHOLD:
+            candidates.append(("series", series))
+        if author and author_count >= SERIES_SUBFOLDER_THRESHOLD:
+            candidates.append(("author", author))
+        existing = next((name for f, v in candidates if (name := existing_subfolder(f, v, manifest))), "")
+        result["subfolder_name"] = existing or clean_name(*candidates[0])
     return result
 
 

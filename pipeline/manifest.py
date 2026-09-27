@@ -3,6 +3,7 @@ Scans the Ebooks library and Obsidian vault to build/update manifest.json.
 Tracks every EPUB's conversion and classification state.
 """
 import json
+import re
 import sys
 from collections import Counter
 from datetime import datetime
@@ -171,13 +172,53 @@ def update_book(book_id: str, updates: dict) -> None:
     log.debug("Manifest updated: %s → %s", book_id, updates.get("status", "(no status change)"))
 
 
+_NATIONALITY_PREFIX = re.compile(r"^[（(【\[][^）)】\]]{1,3}[）)】\]]")  # （美）、[日]
+_PAREN_PART = re.compile(r"[（(][^）)]*[）)]")                        # （Tess Gerritsen）
+_AUTHOR_SEP = re.compile(r"[、,，/;；]")
+_DOT_OR_COLON = re.compile(r"[‧・·•．.･：:]")
+
+
+def clean_name(field: str, value: str) -> str:
+    """作者／系列名去掉國籍前綴與括號外文名；作者多位時只取第一位。保留原本的間隔點，可當資料夾名。"""
+    s = (value or "").strip()
+    s = _NATIONALITY_PREFIX.sub("", s)
+    if field == "author":
+        s = _AUTHOR_SEP.split(s)[0]
+    return _PAREN_PART.sub("", s).strip()
+
+
+def normalize_name(field: str, value: str) -> str:
+    """比對用的鍵：clean_name 之後統一間隔點與冒號、去空白。"""
+    return re.sub(r"\s+", "", _DOT_OR_COLON.sub("．", clean_name(field, value)))
+
+
 def count_books_by_field(field: str, value: str, manifest: dict) -> int:
-    if not value:
+    key = normalize_name(field, value)
+    if not key:
         return 0
     return sum(
         1 for b in manifest["books"].values()
-        if b.get(field, "").strip() == value.strip()
+        if normalize_name(field, b.get(field) or "") == key
     )
+
+
+def existing_subfolder(field: str, value: str, manifest: dict) -> str:
+    """同作者／系列的書若已放在分類下的子資料夾，回傳最多本所在的那個資料夾名，沒有就回傳空字串。
+    不要求資料夾名跟系列名一樣：系列甲就放在作者資料夾「作者甲」裡。"""
+    key = normalize_name(field, value)
+    if not key:
+        return ""
+    folders = Counter()
+    for b in manifest["books"].values():
+        if normalize_name(field, b.get(field) or "") != key:
+            continue
+        path = b.get("epub_path") or b.get("pdf_path")
+        if not path:
+            continue
+        parent = Path(path).parent
+        if parent.parent != EBOOKS_ROOT:
+            folders[parent.name] += 1
+    return folders.most_common(1)[0][0] if folders else ""
 
 
 if __name__ == "__main__":
