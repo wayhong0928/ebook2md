@@ -12,10 +12,10 @@
 
 1. **結構精準 (Structure First)**：
     - 嚴格依照 EPUB 的 `Spine` (閱讀順序) 讀取，而非檔案名稱，確保文章順序正確。
-    - **TOC 補償機制 (Smart Headers)**：若章節內容缺失標題 (只有 `<p>`)，系統會自動從目錄 (TOC) 抓取對應標題並補上，確保上下文 (Context) 結構完整。
+    - **TOC 補償機制 (Smart Headers)**：若章節內容缺失標題 (只有 `<p>`)，系統會自動從目錄 (TOC) 抓取對應標題並補上，確保上下文 (Context) 結構完整。指向檔案內錨點（`chap.xhtml#sec3`）的子章節，也會在錨點位置轉成對應層級的標題。
 
 2. **極致乾淨 (Noise Reduction)**：
-    - **智慧清洗**：自動移除 `<script>`, `<style>`, `<nav>`, `<footer>` 以及 XML 宣告等雜訊。
+    - **智慧清洗**：自動移除 `<script>`, `<style>`, `<nav>`, `<footer>` 以及 XML 宣告等雜訊；`<aside>` 裡的註腳保留。
     - **連結優化**：移除所有內部跳轉連結 (Anchor Links) 避免斷鍊，但保留外部參考連結。
     - **圖片處理**：將 `<img>` 轉換為純文字標註 `[圖片說明: Alt Text]`，保留圖像語意並保持版面整潔。
 
@@ -74,6 +74,15 @@ python src/epub2md.py "books/bookName.epub"
 
 # 指定輸出目錄
 python src/epub2md.py "books/bookName.epub" "output_folder"
+
+# 指定輸出檔名（預設是「書名_作者.md」）
+python src/epub2md.py "books/bookName.epub" "output_folder" --output-name "bookName.md"
+```
+
+### 4. 執行測試
+
+```bash
+python -m pytest tests -q        # 或 python -m unittest discover -s tests
 ```
 
 ---

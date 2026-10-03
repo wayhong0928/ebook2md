@@ -1,6 +1,11 @@
 # Project Specific
 books/
 output/
+
+# Local-only tests: cases are drawn from the owner's library (book titles,
+# quoted sentences), so they must never be pushed to this public repo.
+tests/test_epub2md.py
+tests/local_*
 *.epub
 *.mobi
 *.pdf

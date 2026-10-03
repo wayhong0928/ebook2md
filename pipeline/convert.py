@@ -26,21 +26,20 @@ def convert_one(epub_path: Path, force: bool = False) -> Path | None:
     log.info("Converting: %s", epub_path.name)
 
     result = subprocess.run(
-        [sys.executable, str(EPUB2MD_SCRIPT), str(epub_path), str(MARKDOWN_STAGING)],
+        [sys.executable, str(EPUB2MD_SCRIPT), str(epub_path), str(MARKDOWN_STAGING),
+         "--output-name", f"{stem}.md"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     if result.returncode != 0:
-        log.error("Conversion failed: %s\n%s", epub_path.name, result.stderr)
+        log.error("Conversion failed: %s\n%s%s", epub_path.name, result.stdout, result.stderr)
         return None
 
+    # Named after the EPUB stem so manifest.find_md_for_epub() can match it.
     output_md = MARKDOWN_STAGING / f"{stem}.md"
-    if not output_md.exists():
-        candidates = sorted(MARKDOWN_STAGING.glob("*.md"), key=lambda p: p.stat().st_mtime)
-        if candidates:
-            output_md = candidates[-1]
-
     if output_md.exists():
         log.info("Converted: %s → %s", epub_path.name, output_md.name)
         return output_md

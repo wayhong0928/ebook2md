@@ -9,6 +9,8 @@ class CustomMarkdownConverter(MarkdownConverter):
     2. Keep external links.
     3. Ensure code blocks are preserved (markdownify default usually works).
     4. Handle tables (markdownify default works).
+    5. Render <hr> as '* * *' so a '---' line only ever means a document
+       boundary written by epub2md (pipeline slices the Markdown on it).
     """
 
     def convert_a(self, el, text, *args, **kwargs):
@@ -27,7 +29,8 @@ class CustomMarkdownConverter(MarkdownConverter):
         # Internal link (anchor or relative file) -> return Just Text
         return text
 
-    # We can override convert_table etc. if needed, but default is good start.
+    def convert_hr(self, el, text, *args, **kwargs):
+        return "\n\n* * *\n\n"
 
 
 class EpubConverter:
@@ -38,12 +41,12 @@ class EpubConverter:
         """
         Convert BeautifulSoup object to Markdown string.
         """
-        # We pass str(html_soup) because markdownify takes a string.
-        # However, passing soup directly is not supported by standard markdownify,
-        # it expects HTML string.
+        # markdownify takes an HTML string, not a soup.
         html_string = str(html_soup)
 
-        md = CustomMarkdownConverter(heading_style="atx").convert(html_string)
+        # Underscores are not escaped: books use runs of '_' as fill-in blanks
+        # and URLs contain them; '\_' breaks both and verbatim quote matching.
+        md = CustomMarkdownConverter(heading_style="atx", escape_underscores=False).convert(html_string)
 
         # Post-processing
         md = self._post_process(md)

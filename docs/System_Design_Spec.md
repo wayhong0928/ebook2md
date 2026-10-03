@@ -110,12 +110,13 @@ graph LR
 - **指令**:
 
   ```bash
-  python src/epub2md.py input.epub [output_dir]
+  python src/epub2md.py input.epub [output_dir] [--output-name NAME.md]
   ```
 
 - **參數**:
   - `input.epub`: 來源檔案路徑。
   - `output_dir`: (選填) 輸出目錄，預設為當前目錄。
+  - `-o`, `--output-name`: (選填) 輸出檔名，預設 `{書名}_{作者}.md`。Ebook pipeline 用它指定成 EPUB 的檔名（stem）。
 
 #### 5.2 網頁介面 (Web UI)
 
