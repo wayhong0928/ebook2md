@@ -1,8 +1,8 @@
 # ebook2md
 
-**專案版本： v1.2**
+**專案版本： v1.3.0**
 
-這是一個專注於高品質輸出的 EPUB 轉 Markdown 工具 (Pure Python Converter)。它不依賴任何外部 AI API，而是透過精心的程式邏輯，將電子書轉換為乾淨、結構化且無雜訊的 Markdown 檔案。有文字層的 PDF 書另有 `pipeline/pdf2md.py`（見下方「PDF 書」）。
+把 EPUB 與有文字層的 PDF 電子書轉成 Markdown 的純 Python 工具，不呼叫任何外部 AI API，靠程式邏輯把電子書轉成乾淨、結構化的 Markdown。EPUB 用 `src/epub2md.py`；PDF 用 `pipeline/pdf2md.py`，支援直排中文（見下方「PDF 書」）。網頁介面目前只支援 EPUB。
 
 雖然這是一個純轉檔工具，但其輸出的格式經過特別優化，非常適合作為 **Google NotebookLM**、**ChatGPT** 或 **RAG (Retrieval-Augmented Generation)** 系統的高品質輸入素材。
 
@@ -107,14 +107,15 @@ python -m pytest tests -q        # 或 python -m unittest discover -s tests
 ## 📁 專案結構
 
 ```text
-epub_to_markdown/
+ebook2md/
 ├── src/
 │   ├── cleaner.py      # HTML 清洗與去噪邏輯
 │   ├── converter.py    # Markdown 轉換與格式微調
-│   ├── epub2md.py      # CLI 入口與轉換流程控制
+│   ├── epub2md.py      # EPUB 轉檔的 CLI 入口與流程控制
 │   ├── extractor.py    # EPUB 檔案讀取與 Metadata 提取
-│   └── web_ui.py       # Streamlit 網頁介面
-├── pipeline/           # 個人書庫的分類、PDF 轉檔、讀書筆記流程（見 pipeline/README.md）
+│   └── web_ui.py       # Streamlit 網頁介面（僅 EPUB）
+├── pipeline/           # 個人書庫的分類、讀書筆記流程（見 pipeline/README.md）
+│   └── pdf2md.py       # 有文字層的 PDF 轉 Markdown（PyMuPDF）
 ├── tests/              # 單元測試與測試樣本生成
 ├── output/             # 預設輸出目錄
 ├── docs/               # 系統設計文件
