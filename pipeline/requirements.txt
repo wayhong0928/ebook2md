@@ -4,3 +4,4 @@ markdownify
 Streamlit
 anthropic
 tqdm
+PyMuPDF

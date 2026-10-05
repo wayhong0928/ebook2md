@@ -1,8 +1,8 @@
 # Epub2Markdown-Converter
 
-**專案版本： v1.1**
+**專案版本： v1.2**
 
-這是一個專注於高品質輸出的 EPUB 轉 Markdown 工具 (Pure Python Converter)。它不依賴任何外部 AI API，而是透過精心的程式邏輯，將電子書轉換為乾淨、結構化且無雜訊的 Markdown 檔案。
+這是一個專注於高品質輸出的 EPUB 轉 Markdown 工具 (Pure Python Converter)。它不依賴任何外部 AI API，而是透過精心的程式邏輯，將電子書轉換為乾淨、結構化且無雜訊的 Markdown 檔案。有文字層的 PDF 書另有 `pipeline/pdf2md.py`（見下方「PDF 書」）。
 
 雖然這是一個純轉檔工具，但其輸出的格式經過特別優化，非常適合作為 **Google NotebookLM**、**ChatGPT** 或 **RAG (Retrieval-Augmented Generation)** 系統的高品質輸入素材。
 
@@ -12,7 +12,7 @@
 
 1. **結構精準 (Structure First)**：
     - 嚴格依照 EPUB 的 `Spine` (閱讀順序) 讀取，而非檔案名稱，確保文章順序正確。
-    - **TOC 補償機制 (Smart Headers)**：若章節內容缺失標題 (只有 `<p>`)，系統會自動從目錄 (TOC) 抓取對應標題並補上，確保上下文 (Context) 結構完整。指向檔案內錨點（`chap.xhtml#sec3`）的子章節，也會在錨點位置轉成對應層級的標題。
+    - **TOC 補償機制 (Smart Headers)**：若章節內容缺失標題 (只有 `<p>`)，系統會自動從目錄 (TOC) 抓取對應標題並補上，確保上下文 (Context) 結構完整。指向檔案內錨點（`chap.xhtml#sec3`）的子章節，也會在錨點位置轉成對應層級的標題。整頁只有圖片的篇章頁、封面（例如以圖片呈現的「第一部」扉頁）也保留其 TOC 標題。錨點落在句子中間時不插標題，避免把一句話切開。
 
 2. **極致乾淨 (Noise Reduction)**：
     - **智慧清洗**：自動移除 `<script>`, `<style>`, `<nav>`, `<footer>` 以及 XML 宣告等雜訊；`<aside>` 裡的註腳保留。
@@ -38,6 +38,21 @@
 - **BeautifulSoup4**: HTML DOM 清洗與去噪。
 - **Markdownify**: HTML 轉 Markdown 核心。
 - **Streamlit**: 網頁介面框架。
+- **PyMuPDF**（僅 `pipeline/pdf2md.py` 使用）：PDF 文字與版面座標。注意 PyMuPDF 採 AGPL-3.0／商業雙授權，與本專案的 MIT 授權不同。
+
+---
+
+## 📄 PDF 書（`pipeline/pdf2md.py`）
+
+```bash
+python pipeline/pdf2md.py "output_folder" "books/bookName.pdf"
+```
+
+- 有書籤就照書籤分章；沒書籤的橫排書用字級判斷標題。
+- 合併排版斷行、跨頁段落；頁面上下 8% 範圍內、在兩成以上頁面重複出現的頁首、頁尾、頁碼會刪掉。
+- 支援直排中文，包含每個字各自一行的直排 PDF。
+- 掃描檔與字型缺少 Unicode 對照的 PDF 由 `text_layer()` 判斷後跳過，不做 OCR。
+- 已知限制：頁碼、書眉不在上下邊界內時（常見於直排書與側邊書眉）會留在正文，並可能打斷跨頁段落；圖表、灰底框、側邊標籤的文字會混入正文；表格不還原。
 
 ---
 
@@ -85,6 +100,8 @@ python src/epub2md.py "books/bookName.epub" "output_folder" --output-name "bookN
 python -m pytest tests -q        # 或 python -m unittest discover -s tests
 ```
 
+版本庫裡的測試都用合成資料（程式現場產生的小型 EPUB／PDF 或 HTML 片段），不含任何真實書籍內容；拿真書做的測試只留在本機，已列入 `.gitignore`。`tests/test_pdf2md.py` 涵蓋段落合併、跨頁接段、頁首頁碼刪除、書籤標題、直排與掃描檔判斷。
+
 ---
 
 ## 📁 專案結構
@@ -97,6 +114,7 @@ epub_to_markdown/
 │   ├── epub2md.py      # CLI 入口與轉換流程控制
 │   ├── extractor.py    # EPUB 檔案讀取與 Metadata 提取
 │   └── web_ui.py       # Streamlit 網頁介面
+├── pipeline/           # 個人書庫的分類、PDF 轉檔、讀書筆記流程（見 pipeline/README.md）
 ├── tests/              # 單元測試與測試樣本生成
 ├── output/             # 預設輸出目錄
 ├── docs/               # 系統設計文件

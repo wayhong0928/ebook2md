@@ -48,21 +48,27 @@ def convert_one(epub_path: Path, force: bool = False) -> Path | None:
     return None
 
 
-def convert_one_pdf(pdf_path: Path, force: bool = False) -> Path | None:
+def convert_one_pdf(pdf_path: Path, force: bool = False, author: str = "") -> Path | None:
+    """PDF with a text layer -> md via pdf2md. Scans and PDFs whose fonts
+    have no Unicode map are skipped (no OCR) and get no md."""
+    import pdf2md
+
     stem = pdf_path.stem
     existing = find_md_for_epub(stem)
     if existing and not force:
         log.debug("Skip (already converted): %s", pdf_path.name)
         return existing
 
+    ok, why = pdf2md.text_layer(pdf_path)
+    if not ok:
+        log.warning("PDF not converted (%s): %s", why, pdf_path.name)
+        return None
+
     MARKDOWN_STAGING.mkdir(parents=True, exist_ok=True)
     log.info("Converting PDF: %s", pdf_path.name)
 
     try:
-        from markitdown import MarkItDown
-        result = MarkItDown().convert(str(pdf_path))
-        output_md = MARKDOWN_STAGING / f"{stem}.md"
-        output_md.write_text(result.text_content, encoding="utf-8")
+        output_md, _ = pdf2md.convert(pdf_path, MARKDOWN_STAGING, author=author, out_name=f"{stem}.md")
         log.info("Converted PDF: %s → %s", pdf_path.name, output_md.name)
         return output_md
     except Exception as exc:
@@ -90,7 +96,7 @@ def convert_batch(book_ids: list[str] | None = None, force: bool = False) -> dic
         if entry.get("epub_path"):
             md_path = convert_one(Path(entry["epub_path"]), force=force)
         elif entry.get("pdf_path"):
-            md_path = convert_one_pdf(Path(entry["pdf_path"]), force=force)
+            md_path = convert_one_pdf(Path(entry["pdf_path"]), force=force, author=entry.get("author", ""))
         else:
             log.warning("No source file for: %s", book_id)
             continue

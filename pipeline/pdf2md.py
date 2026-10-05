@@ -1,11 +1,11 @@
-"""Prototype (2026-10-05, not wired into the pipeline): PDF with a text layer -> Markdown
+"""PDF with a text layer -> Markdown (used by convert.py; MarkItDown before 2026-10-05)
 
 - chapter headings from PDF bookmarks (get_toc), '---' before top-level ones
 - without bookmarks: headings guessed from font size
 - vertical (直排) pages: columns ordered right-to-left, top-to-bottom
 - lines inside a block are joined (no newline between CJK characters)
 - running headers / footers / page numbers dropped
-- pages with no usable text are reported, not converted (scans need OCR)
+- text_layer() tells scans and broken-font PDFs apart; those are not converted (no OCR)
 """
 import collections
 import datetime
@@ -41,14 +41,38 @@ def join_lines(parts):
     return out
 
 
+def _expected(ch):
+    """Characters a Chinese or English book is made of. Fonts without a
+    proper ToUnicode map come out as private-use glyphs or as random letters
+    from unrelated scripts (Armenian, Ethiopic...), which fall outside."""
+    o = ord(ch)
+    return (o < 0x250 or 0x2000 <= o <= 0x2BFF or 0x2E80 <= o <= 0x9FFF
+            or 0xF900 <= o <= 0xFAFF or 0xFE30 <= o <= 0xFE4F or 0xFF00 <= o <= 0xFFEF)
+
+
 def usable(text):
-    """Share of characters that are CJK / letters / digits / common punctuation
-    (not private-use glyphs or '(cid:123)' garbage)."""
+    """Share of characters that look like real book text."""
     t = re.sub(r"\s", "", text)
     if not t:
         return 0.0
-    pua = sum(1 for c in t if "" <= c <= "")
-    return 1 - pua / len(t)
+    return sum(map(_expected, t)) / len(t)
+
+
+def text_layer(pdf_path, sample=40):
+    """(ok, reason): whether the PDF has a text layer worth converting.
+    Scans have (almost) no text; broken fonts give garbled text."""
+    doc = fitz.open(pdf_path)
+    n = doc.page_count
+    step = max(1, n // sample)
+    pages = [doc[i].get_text() for i in range(0, n, step)]
+    doc.close()
+    texty = [t for t in pages if len(t.strip()) >= 20]
+    if len(texty) < len(pages) * 0.2:
+        return False, f"scan: {len(texty)}/{len(pages)} sampled pages have text"
+    garbled = sum(usable(t) < 0.8 for t in texty)
+    if garbled > len(texty) * 0.3:
+        return False, f"garbled: {garbled}/{len(texty)} text pages unreadable (font without Unicode map)"
+    return True, ""
 
 
 def page_items(page):
@@ -116,7 +140,9 @@ def page_items(page):
                 lines.append((l["bbox"], text, max(s["size"] for s in l["spans"])))
     if not lines:
         return paras, False
-    right = max(bb[2] for bb, _, _ in lines)
+    # right edge of the text block; single characters (side tabs, stacked
+    # labels) sitting further right must not move it
+    right = max((bb[2] for bb, t, _ in lines if len(t.strip()) > 1), default=max(bb[2] for bb, _, _ in lines))
     run = [lines[0]]
 
     def flush():
@@ -143,7 +169,7 @@ def norm_furniture(text):
     return re.sub(r"\d+", "#", unicodedata.normalize("NFKC", text)).strip()
 
 
-def convert(pdf_path, out_dir):
+def convert(pdf_path, out_dir, author="", out_name=None):
     doc = fitz.open(pdf_path)
     n = doc.page_count
     pages = []
@@ -200,7 +226,7 @@ def convert(pdf_path, out_dir):
             return True
         return len(pk) >= 2 and (k.startswith(pk) or pk.startswith(k)) and len(pk) <= len(k) * 1.5
 
-    out = [f"# 書名：{Path(pdf_path).stem}\n\n# 作者：\n\n# 轉換日期：{datetime.date.today().isoformat()}\n\n---\n"]
+    out = [f"# 書名：{Path(pdf_path).stem}\n\n# 作者：{author}\n\n# 轉換日期：{datetime.date.today().isoformat()}\n\n---\n"]
     open_idx = None  # index in out of a paragraph that runs on to the next page
     heads_guessed = 0
     for i, (paras, vertical, h) in enumerate(pages):
@@ -246,9 +272,10 @@ def convert(pdf_path, out_dir):
             else:
                 out.append(text + "\n")
             open_idx = len(out) - 1 if open_end else None
+    doc.close()  # Windows keeps an open PDF locked
     md = "\n".join(out)
     md = re.sub(r"\n{3,}", "\n\n", md)
-    out_path = Path(out_dir) / f"{Path(pdf_path).stem}.md"
+    out_path = Path(out_dir) / (out_name or f"{Path(pdf_path).stem}.md")
     out_path.write_text(md, encoding="utf-8")
     stats.update(pages=n, toc_entries=len(toc), headings_guessed=heads_guessed, chars=len(md))
     return out_path, stats
