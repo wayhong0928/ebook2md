@@ -62,11 +62,14 @@ def page_items(page):
                 continue
             size = max(s["size"] for s in l["spans"])
             x0, y0, x1, y1 = l["bbox"]
-            if abs(l["dir"][0]) < 0.5:
+            # some vertical PDFs place every character as its own horizontal line
+            one_cjk = len(text.strip()) == 1 and is_cjk(text.strip())
+            if abs(l["dir"][0]) < 0.5 or one_cjk:
                 ver.append((x0, y0, x1, y1, text, size))
             else:
                 hor.append((y0, x0, y1, text, size, b["number"]))
-    vertical = len(ver) > len(hor)
+    # weigh by characters: a side tab of stacked single characters must not flip a text page
+    vertical = sum(len(v[4].strip()) for v in ver) > sum(len(h[3].strip()) for h in hor)
     paras = []
     if vertical:
         # columns: cluster by x centre, right to left
@@ -127,7 +130,7 @@ def page_items(page):
         bb, text, size = ln
         cont = (abs(size - prev_size) <= 0.5
                 and prev_bb[2] >= right - prev_size * 1.5
-                and 0 <= bb[1] - prev_bb[3] < prev_size * 1.2)
+                and -prev_size * 0.5 <= bb[1] - prev_bb[3] < prev_size * 1.2)  # line boxes may overlap a little
         if not cont:
             flush()
             run = []

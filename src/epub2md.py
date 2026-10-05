@@ -55,7 +55,7 @@ def generate_markdown_content(epub_path, stats=None):
     if stats is None:
         stats = {}
     stats.update(documents=0, empty_documents=0, failed_documents=0,
-                 toc_headings_added=0, file_titles_added=0,
+                 toc_headings_added=0, file_titles_added=0, empty_doc_titles_added=0,
                  missing_files=len(extractor.missing_files))
 
     metadata = extractor.get_metadata()
@@ -97,9 +97,16 @@ def generate_markdown_content(epub_path, stats=None):
             # 2. Convert
             md = converter.convert(soup)
 
-            # Skip empty content
+            # Skip empty content, but keep the TOC titles of a page that is only
+            # a picture (part/chapter title pages, covers): the title would be lost
             if not md.strip():
                 stats["empty_documents"] += 1
+                if not doc.toc_entries:
+                    continue
+                md = "\n\n".join(f"{'#' * min(max(e.depth, 1), 6)} {e.title}" for e in doc.toc_entries)
+                stats["empty_doc_titles_added"] += len(doc.toc_entries)
+                full_markdown_content.append(md)
+                full_markdown_content.append("\n\n---\n\n")
                 continue
 
             # 3. TOC Compensation: the document has a TOC title but its
