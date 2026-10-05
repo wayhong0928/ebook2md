@@ -8,7 +8,9 @@ Workflow:
   3. apply_notes() → fills 10_Books/ note, creates 20_Concepts/ concept cards
 """
 import json
+import math
 import re
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -17,12 +19,25 @@ from logger import get_logger
 from activity import record_book_action
 from manifest import load_manifest, update_book
 
+# The converter's EPUB reader tolerates missing manifest files and resolves
+# nested/relative TOC entries; slicing reuses it instead of a second reader.
+_SRC_DIR = PIPELINE_DIR.parent / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
 log = get_logger("notes")
 
 PENDING_NOTES_FILE = PIPELINE_DIR / "pending_notes.json"
 NOTES_RESULTS_FILE = PIPELINE_DIR / "notes_results.json"
 MIN_CHAPTER_CHARS = 200
+# Not a cut-off: a chapter longer than this is split again (TOC sub-entries,
+# then headings, then paragraph boundaries). No text is ever dropped.
 MAX_CHARS_PER_CHAPTER = 40000
+# Re-split pieces smaller than this are packed together with their neighbours.
+PACK_MIN = 3000
+# Text before the first TOC sub-entry shorter than this means the file's own
+# TOC entry is a part title ('第一部' + an epigraph), not a chapter.
+PART_TITLE_MAX = 500
 
 
 def _safe_title(title: str) -> str:
@@ -37,82 +52,425 @@ def _safe_title(title: str) -> str:
 # Chapter slicing
 # ---------------------------------------------------------------------------
 
-def _slice_from_epub(epub_path: Path) -> list[dict]:
-    """Parse EPUB directly using spine order + TOC titles."""
+# Each source document (an EPUB spine file, or an MD section between '---'
+# lines) becomes text lines plus split points {line index: (rank, title)}.
+# rank is the TOC depth for TOC entries and _HEADING_RANK + level for
+# headings, so a lower rank is a bigger boundary. Pieces are only ever cut at
+# line boundaries and re-joined with "\n"; every document is checked to come
+# back whole (the old slicer silently kept the first 40000 characters).
+
+_HEADING_RANK = 100
+_FILE_RANK = 200  # start of an untitled file joined to the previous chapter
+_SPLIT_MARK = "\x00SPLIT{}\x00"
+
+# Notes / bibliography / index at the back of a book: kept out of the chapters
+# to summarise, listed in the report instead.
+# The whole title must be made of these words ('參考書目及注釋', '附錄2：網路資源與延伸
+# 閱讀'); '參考文獻的寫法' or '延伸閱讀 某人的自傳' are chapters.
+_BM_WORD = (r"(注釋|註釋|注解|註解|附註|附注|追記|注|註|參考文獻|參考書目|參考資料|參考材料|參考資源|參考書籍"
+            r"|徵引書目|引文出處|人名索引|中文索引|英文索引|名詞索引|參考|書目|索引"
+            r"|延伸閱讀|進階閱讀|推薦閱讀|推薦書單|資料來源|引用書目|引用文獻|引用資料|資料"
+            r"|網路資源|研究|縮寫說明)")
+_BACK_MATTER_TITLE = re.compile(
+    rf"^(附錄[\d０-９一二三四五六七八九十]*[：:]?)?(主要|章節)?{_BM_WORD}((與|及|和|、|之)?{_BM_WORD})*(精選)?$"
+)
+_BACK_MATTER_TITLE_EN = re.compile(
+    r"^(selected )?(notes|endnotes|bibliography|references|index|sources|further reading)$", re.I)
+_BACK_MATTER_FROM = 0.5  # only in the second half of the book
+
+
+def _is_back_matter(title: str | None, start_ratio: float) -> bool:
+    if not title or start_ratio < _BACK_MATTER_FROM:
+        return False
+    zh = re.sub(r"[\s∣|｜【】\[\]（）()]", "", title)
+    en = re.sub(r"[^a-z ]", "", title.lower()).strip()
+    return bool(_BACK_MATTER_TITLE.match(zh) or _BACK_MATTER_TITLE_EN.match(en))
+
+
+def _chars(lines: list[str], a: int, b: int) -> int:
+    return sum(len(l) for l in lines[a:b]) + max(b - a - 1, 0)
+
+
+def _ends_sentence(line: str) -> bool:
+    from cleaner import _ends_sentence as ends
+    return ends(line)
+
+
+def _epub_doc_lines(doc):
+    """(lines, points, lead_entry, original_text) for one spine document."""
+    from bs4 import NavigableString
+    from cleaner import EpubCleaner, HEADING_TAGS, CONTAINER_TAGS, NO_HEADING_INSIDE
+
+    cleaner = EpubCleaner(doc.content)
+    soup = cleaner.soup
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    root = soup.body or soup
+    original = root.get_text("\n", strip=True)
+
+    marks: dict[str, tuple[int, str]] = {}
+    used: set[int] = set()
+
+    def heading_run_start(h):
+        # '### 第一章' + '# 章名' is one title: cut before the first of the run
+        while True:
+            prev = h.find_previous_sibling()
+            if prev is None or prev.name not in HEADING_TAGS:
+                return h
+            between = h.previous_sibling
+            while between is not None and between is not prev:
+                if isinstance(between, NavigableString) and between.strip():
+                    return h
+                between = between.previous_sibling
+            h = prev
+
+    def mark(node, rank, title):
+        if node is root or id(node) in used:
+            return node is root
+        used.add(id(node))
+        key = _SPLIT_MARK.format(len(marks))
+        marks[key] = (rank, title)
+        node.insert_before(NavigableString(key))
+        return True
+
+    lead = next((e for e in doc.toc_entries if not e.fragment), None)
+    for i, entry in enumerate(doc.toc_entries):
+        if not entry.fragment:
+            continue
+        anchor = soup.find(id=entry.fragment) or soup.find(attrs={"name": entry.fragment})
+        if anchor is None:
+            if lead is None and i == 0:
+                lead = entry  # same rule as epub2md: points at the file itself
+            continue
+        heading = anchor if anchor.name in HEADING_TAGS else anchor.find_parent(HEADING_TAGS)
+        if heading is not None:
+            point = heading_run_start(heading)
+        elif anchor.name in NO_HEADING_INSIDE or anchor.find_parent(NO_HEADING_INSIDE):
+            continue
+        elif anchor.name in CONTAINER_TAGS and anchor.get_text(strip=True):
+            point = anchor
+        elif cleaner._has_text_before(anchor) or not cleaner._previous_text_ends_sentence(anchor):
+            continue  # mid-sentence anchor: cutting here would split a sentence
+        else:
+            point = anchor
+        if mark(point, max(entry.depth, 1), entry.title) and point is root and lead is None:
+            lead = entry
+
+    for h in root.find_all(HEADING_TAGS):
+        if h.find_parent(NO_HEADING_INSIDE):
+            continue
+        start = heading_run_start(h)
+        title = start.get_text(strip=True)
+        if title:
+            mark(start, _HEADING_RANK + int(start.name[1]) if start.name[1:].isdigit() else _HEADING_RANK + 6, title)
+
+    lines: list[str] = []
+    points: dict[int, tuple[int, str]] = {}
+    for line in root.get_text("\n", strip=True).split("\n"):
+        if line in marks:
+            idx, (rank, title) = len(lines), marks[line]
+            if idx not in points or rank < points[idx][0]:
+                points[idx] = (rank, title)
+        else:
+            lines.append(line)
+    points = {i: p for i, p in points.items() if i < len(lines)}
+    return lines, points, lead, original
+
+
+def _md_section_lines(section: str):
+    lines = section.split("\n")
+    points = {}
+    for i, line in enumerate(lines):
+        m = re.match(r"^(#{1,6})\s+(.+)", line)
+        if m:
+            points[i] = (_HEADING_RANK + len(m.group(1)), m.group(2).strip())
+    return lines, points
+
+
+def _top_cuts(lines, points, lead_title, base_rank):
+    """Chapter starts in one document: [(line index, title)].
+    The document start is a chapter start only when it has a title (its own
+    TOC entry, or a heading at the top). Text with no title is the rest of the
+    previous chapter (books often split one chapter over several files)."""
+    if not lines:
+        return []
+    toc_inner = sorted(i for i, (r, _) in points.items() if r < _HEADING_RANK and i > 0)
+    if base_rank is not None and toc_inner and _chars(lines, 0, toc_inner[0]) < PART_TITLE_MAX:
+        # the file's own entry is only a part title ('第一部') over the chapters inside
+        base_rank = max(base_rank, min(points[i][0] for i in toc_inner))
+    cuts = [(i, points[i][1]) for i in toc_inner
+            if base_rank is not None and points[i][0] <= base_rank]
+    if cuts and _chars(lines, 0, len(lines)) / (len(cuts) + 1) < PACK_MIN:
+        # A flat TOC of many short entries (a quick-reference book): keep the
+        # file as one chapter rather than hundreds of 200-character ones.
+        cuts = []
+    title = lead_title
+    if title is None and 0 in points:
+        title = points[0][1]
+    if title is None:
+        end0 = cuts[0][0] if cuts else len(lines)
+        heads = [i for i in sorted(points) if i < end0 and _chars(lines, 0, i) < MIN_CHAPTER_CHARS]
+        title = points[heads[0]][1] if heads else None
+    return ([(0, title)] if title is not None else []) + cuts
+
+
+def _merge_short(lines, segs):
+    """Pieces under MIN_CHAPTER_CHARS (a part title page, a one-line intro)
+    are joined to the next piece, or the previous one if last."""
+    if len(segs) < 2:
+        return segs
+    out = []
+    pending = None
+    for seg in segs:
+        if pending is not None:
+            title = pending[0] if seg[0] and pending[0] and seg[0].startswith(pending[0] + "／") else (seg[0] or pending[0])
+            seg = [title, pending[1], seg[2]] + seg[3:]
+            pending = None
+        if _chars(lines, seg[1], seg[2]) < MIN_CHAPTER_CHARS:
+            pending = seg
+            continue
+        out.append(seg)
+    if pending is not None:
+        if out:
+            out[-1] = [out[-1][0], out[-1][1], pending[2]] + out[-1][3:]
+        else:
+            out.append(pending)
+    return out
+
+
+def _paragraph_split(lines, a, b, limit):
+    """Cut [a, b) at line boundaries into pieces of at most `limit` chars,
+    preferring a line that ends a sentence once a piece reaches its share."""
+    n = math.ceil(_chars(lines, a, b) / limit)
+    target = _chars(lines, a, b) / n
+    bounds, start, size = [a], a, 0
+    for i in range(a, b):
+        size += len(lines[i]) + (1 if i > start else 0)
+        if i + 1 >= b:
+            break
+        nxt = size + 1 + len(lines[i + 1])
+        if (size >= target and _ends_sentence(lines[i])) or nxt > limit:
+            bounds.append(i + 1)
+            start, size = i + 1, 0
+    bounds.append(b)
+    return list(zip(bounds, bounds[1:]))
+
+
+def _pack(lines, points, title, spans, limit):
+    """Group consecutive spans until a group reaches PACK_MIN (never past
+    `limit`). Titles: 'parent／sub', or 'parent／first～last' for a group."""
+    groups, cur = [], []
+    for span in spans:
+        if cur and (_chars(lines, cur[0][0], cur[-1][1]) >= PACK_MIN
+                    or _chars(lines, cur[0][0], span[1]) > limit):
+            groups.append(cur)
+            cur = []
+        cur.append(span)
+    if cur:
+        if groups and _chars(lines, cur[0][0], cur[-1][1]) < MIN_CHAPTER_CHARS \
+                and _chars(lines, groups[-1][0][0], cur[-1][1]) <= limit:
+            groups[-1] += cur
+        else:
+            groups.append(cur)
+
+    a = spans[0][0]
+    def sub(x):
+        return None if x == a else points[x][1]
+    out = []
+    for g in groups:
+        first, last = sub(g[0][0]), sub(g[-1][0])
+        # a group that opens with the chapter's own intro keeps the chapter title
+        name = first if len(g) == 1 or first is None or last is None else f"{first}～{last}"
+        if name is None:
+            t = title
+        else:
+            t = f"{title}／{name}" if title else name
+        out.append([t, g[0][0], g[-1][1]])
+    return out
+
+
+def _refine(lines, points, title, a, b, limit, how=None):
+    """Split [a, b) further while it is longer than `limit`.
+    Returns [[title, start, end, how]] where how is None (not split) or
+    'toc_sub' / 'heading' / 'paragraph'."""
+    if _chars(lines, a, b) <= limit:
+        return [[title, a, b, how]]
+    inner = {i: p for i, p in points.items() if a < i < b}
+    for rank in sorted({r for r, _ in inner.values()}):
+        cuts = sorted(i for i, (r, _) in inner.items() if r == rank)
+        bounds = [a] + cuts + [b]
+        pieces = _pack(lines, points, title, list(zip(bounds, bounds[1:])), limit)
+        if len(pieces) < 2:
+            continue  # every cut at this rank only made tiny pieces: try the next rank
+        sub_how = "toc_sub" if rank < _HEADING_RANK else "heading"
+        out = []
+        for t, x, y in pieces:
+            out += _refine(lines, points, t, x, y, limit, sub_how)
+        return out
+    parts = _paragraph_split(lines, a, b, limit)
+    if len(parts) == 1:
+        return [[title, a, b, how]]  # one line longer than the limit: left whole
+    return [[f"{title}（{k}/{len(parts)}）" if title else None, x, y, "paragraph"]
+            for k, (x, y) in enumerate(parts, 1)]
+
+
+def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
+    """docs: [(lines, points, lead_title, base_rank, original_text)].
+    Returns (chapters, report)."""
+    report = {
+        "source": source, "documents": len(docs),
+        "skipped_short_documents": 0, "skipped_short_chars": 0,
+        "toc_resplit_documents": 0, "toc_resplit_chapters": 0,
+        "oversize_chapters": 0,
+        "oversize_split": {"toc_sub": 0, "heading": 0, "paragraph": 0},
+        "still_oversize": [], "back_matter": [], "self_check": True,
+        "original_chars": 0, "chapter_chars": 0, "back_matter_chars": 0,
+    }
+    # The whole book as one run of lines, so a chapter can span files.
+    lines: list[str] = []
+    points: dict[int, tuple[int, str]] = {}
+    starts: list[tuple[int, str | None]] = []
+    kept: list[str] = []
+    pending_title = None  # TOC title of a skipped chapter-title page
+    absorb = False  # previous kept file was a short titled page
+    for d, (doc_lines, doc_points, lead_title, base_rank, original) in enumerate(docs):
+        report["original_chars"] += len(original)
+        if "\n".join(doc_lines) != original:
+            report["self_check"] = False
+            log.error("slice self-check: document %d text changed while marking split points", d)
+        if len(original) < MIN_CHAPTER_CHARS:
+            report["skipped_short_documents"] += 1
+            report["skipped_short_chars"] += len(original)
+            if lead_title:
+                pending_title = lead_title
+            continue
+        off = len(lines)
+        cuts = _top_cuts(doc_lines, doc_points, lead_title or pending_title, base_rank)
+        if absorb and lead_title is None and cuts and cuts[0][0] == 0:
+            cuts = cuts[1:]  # body of the title page before it: same chapter
+        # A titled page this short is the chapter's title page (title +
+        # epigraph); the next untitled file is that chapter's body.
+        absorb = bool(lead_title) and len(original) < PART_TITLE_MAX
+        pending_title = None
+        if sum(1 for i, _ in cuts if i > 0) > 0:
+            report["toc_resplit_documents"] += 1
+            report["toc_resplit_chapters"] += len(cuts)
+        lines += doc_lines
+        points.update({off + i: p for i, p in doc_points.items()})
+        if off > 0 and not (cuts and cuts[0][0] == 0) and off not in points:
+            points[off] = (_FILE_RANK, None)
+        starts += [(off + i, t) for i, t in cuts]
+        kept.append(original)
+
+    if not lines:
+        return [], report
+    if not starts or starts[0][0] != 0:
+        starts.insert(0, (0, None))
+    bounds = [i for i, _ in starts] + [len(lines)]
+    segs = _merge_short(lines, [[t, a, b] for (a, t), b in zip(starts, bounds[1:])])
+
+    total = _chars(lines, 0, len(lines)) or 1
+    chapters, pieces = [], []
+    for title, a, b in segs:
+        size = _chars(lines, a, b)
+        if _is_back_matter(title, _chars(lines, 0, a) / total):
+            report["back_matter"].append({"title": title, "char_count": size})
+            report["back_matter_chars"] += size
+            pieces.append((a, b))
+            continue
+        refined = _refine(lines, points, title, a, b, limit)
+        if len(refined) > 1:
+            report["oversize_chapters"] += 1
+            same = [r[0] for r in refined]
+            if len(set(same)) < len(same):  # cut at untitled file starts
+                for k, r in enumerate(refined):
+                    if same.count(r[0]) > 1 and r[0]:
+                        nth = same[:k + 1].count(r[0])
+                        r[0] = f"{r[0]}（{nth}/{same.count(r[0])}）"
+        for t, x, y, how in refined:
+            if how:
+                report["oversize_split"][how] += 1
+            content = "\n".join(lines[x:y])
+            pieces.append((x, y))
+            ch = {
+                "chapter_num": len(chapters) + 1,
+                "title": t or f"第 {len(chapters) + 1} 節",
+                "char_count": len(content),
+                "content": content,
+            }
+            if how:
+                ch["split"] = how
+            if len(content) > limit:
+                report["still_oversize"].append({"title": ch["title"], "char_count": len(content)})
+            chapters.append(ch)
+            report["chapter_chars"] += len(content)
+
+    # Chapters + back matter must tile the book exactly, in order.
+    edges = [p for ab in pieces for p in ab]
+    if not pieces or edges[0] != 0 or edges[-1] != len(lines) or any(
+            edges[k] != edges[k + 1] for k in range(1, len(edges) - 1, 2)):
+        report["self_check"] = False
+        log.error("slice self-check: chapters do not cover the book contiguously")
+    if "\n".join("\n".join(lines[x:y]) for x, y in pieces) != "\n".join(kept):
+        report["self_check"] = False
+        log.error("slice self-check: chapters do not re-join to the source text")
+    return chapters, report
+
+
+def _slice_from_epub(epub_path: Path) -> tuple[list[dict], dict]:
+    """Slice an EPUB in spine order. A file holding several TOC chapters is cut
+    at their anchors; a chapter over MAX_CHARS_PER_CHAPTER is split again."""
     try:
-        import ebooklib
-        from ebooklib import epub
-        from bs4 import BeautifulSoup
-
-        book = epub.read_epub(str(epub_path))
-
-        # Build filename → title map from TOC
-        title_map: dict[str, str] = {}
-
-        def _walk_toc(nodes):
-            for node in nodes:
-                if isinstance(node, tuple) and len(node) == 2:
-                    link, children = node
-                    if hasattr(link, "href") and hasattr(link, "title") and link.title:
-                        fname = link.href.split("#")[0].split("/")[-1]
-                        if fname and fname not in title_map:
-                            title_map[fname] = link.title.strip()
-                    _walk_toc(children)
-
-        _walk_toc(book.toc)
-
-        chapters, num = [], 0
-        for spine_id, _ in book.spine:
-            item = book.get_item_with_id(spine_id)
-            if not item or item.media_type != "application/xhtml+xml":
-                continue
-            soup = BeautifulSoup(item.get_content(), "html.parser")
-            text = soup.get_text(separator="\n", strip=True)
-            if len(text) < MIN_CHAPTER_CHARS:
-                continue
-
-            fname = Path(item.get_name()).name
-            title = title_map.get(fname)
-            if not title:
-                heading = soup.find(["h1", "h2", "h3"])
-                title = heading.get_text(strip=True) if heading else f"第 {num + 1} 節"
-
-            num += 1
-            chapters.append({
-                "chapter_num": num,
-                "title": title,
-                "char_count": len(text),
-                "content": text[:MAX_CHARS_PER_CHAPTER],
-            })
-        return chapters
+        from extractor import EpubExtractor
+        extractor = EpubExtractor(str(epub_path))
+        docs = []
+        for doc in extractor.get_spine_documents():
+            lines, points, lead, original = _epub_doc_lines(doc)
+            toc_ranks = [r for r, _ in points.values() if r < _HEADING_RANK]
+            base_rank = lead.depth if lead else (min(toc_ranks) if toc_ranks else None)
+            docs.append((lines, points, lead.title if lead else None, base_rank, original))
+        return _assemble(docs, source="epub")
     except Exception as e:
         log.error("EPUB parsing failed: %s", e)
-        return []
+        return [], {}
 
 
-def _slice_from_md(md_text: str) -> list[dict]:
-    """Fallback: slice converted MD file by --- separators."""
-    raw = re.split(r"\n---+\n", md_text)
-    chapters, num = [], 0
-    for section in raw:
+def _slice_from_md(md_text: str) -> tuple[list[dict], dict]:
+    """Fallback: slice converted MD file by --- separators; a section over
+    MAX_CHARS_PER_CHAPTER is split at its headings, then paragraphs."""
+    docs = []
+    for section in re.split(r"\n---+\n", md_text):
         section = section.strip()
-        if not section:
-            continue
-        if re.match(r"^#\s*[書作轉]", section):
+        # only the converter's own front matter block ('# 書名：…'); a chapter
+        # titled '書名頁' or '作者序' is book text
+        if not section or re.match(r"^#\s*(書名|作者|轉換日期)[：:]", section):
             continue
         clean = re.sub(r"\[圖片[^\]]*\]", "", section).strip()
         if len(clean) < MIN_CHAPTER_CHARS:
             continue
-        m = re.match(r"^#{1,6}\s+(.+)", section, re.MULTILINE)
-        title = m.group(1).strip() if m else f"第 {num + 1} 節"
-        num += 1
-        chapters.append({
-            "chapter_num": num,
-            "title": title,
-            "char_count": len(section),
-            "content": section[:MAX_CHARS_PER_CHAPTER],
-        })
-    return chapters
+        lines, points = _md_section_lines(section)
+        docs.append((lines, points, None, None, section))
+    return _assemble(docs, source="md")
+
+
+def _print_slice_report(report: dict, chapters: list[dict]) -> None:
+    o = report["oversize_split"]
+    print(f"  切片自檢：{'通過' if report['self_check'] else '失敗'}"
+          f"（原文 {report['original_chars']:,} 字 = 章節 {report['chapter_chars']:,}"
+          f" + 書末附屬 {report['back_matter_chars']:,} + 過短略過 {report['skipped_short_chars']:,}"
+          f"，換行另計）")
+    if report["toc_resplit_documents"]:
+        print(f"  依 TOC 錨點重新分章：{report['toc_resplit_documents']} 個檔切成 {report['toc_resplit_chapters']} 章")
+    if report["oversize_chapters"]:
+        print(f"  超過 {MAX_CHARS_PER_CHAPTER:,} 字的 {report['oversize_chapters']} 章再拆，拆出：依 TOC 小節 {o['toc_sub']} 章、依標題 {o['heading']} 章、依段落 {o['paragraph']} 章")
+    if report["back_matter"]:
+        print(f"  書末附屬（不寫摘要，不放進 chapters）：{len(report['back_matter'])} 段")
+        for b in report["back_matter"]:
+            print(f"    - {b['title']}（{b['char_count']:,} 字）")
+    if report["still_oversize"]:
+        print(f"  [warn] 仍超過上限（單一段落就超過，沒有可切的位置）：")
+        for s in report["still_oversize"]:
+            print(f"    - {s['title']}（{s['char_count']:,} 字）")
 
 
 # ---------------------------------------------------------------------------
@@ -133,21 +491,24 @@ def prepare_notes(book_id: str, max_chapters: int | None = None, tag: str | None
     md_path = Path(entry["md_path"]) if entry.get("md_path") else None
     epub_path = Path(entry["epub_path"]) if entry.get("epub_path") else None
 
-    chapters, source_used = [], "epub"
+    chapters, report, source_used = [], {}, "epub"
 
     # EPUB first: accurate chapter structure from spine + TOC
-    if epub_path and epub_path.exists():
-        chapters = _slice_from_epub(epub_path)
+    if epub_path and epub_path.exists() and epub_path.suffix.lower() == ".epub":
+        chapters, report = _slice_from_epub(epub_path)
         log.info("Sliced %d chapters from EPUB: %s", len(chapters), epub_path.name)
 
     # Fall back to MD if EPUB yields too few chapters
     if len(chapters) < 2 and md_path and md_path.exists():
         log.info("EPUB yielded %d chapter(s) — falling back to MD", len(chapters))
-        chapters = _slice_from_md(md_path.read_text(encoding="utf-8", errors="ignore"))
+        chapters, report = _slice_from_md(md_path.read_text(encoding="utf-8", errors="ignore"))
         source_used = "md"
 
     if not chapters:
         log.error("No chapters found for: %s", book_id)
+        return None
+    if not report.get("self_check", False):
+        log.error("Slice self-check failed for %s: chapters don't re-join to the source text; not writing", book_id)
         return None
 
     if max_chapters:
@@ -161,6 +522,10 @@ def prepare_notes(book_id: str, max_chapters: int | None = None, tag: str | None
         "core_premise": classification.get("core_premise", ""),
         "total_chapters": len(chapters),
         "source_used": source_used,
+        # back matter (notes, bibliography, index) is not summarised; titles
+        # and sizes only, so the batches stay small
+        "back_matter": report.get("back_matter", []),
+        "slice_report": {k: v for k, v in report.items() if k != "back_matter"},
         "chapters": chapters,
     }
 
@@ -170,10 +535,13 @@ def prepare_notes(book_id: str, max_chapters: int | None = None, tag: str | None
     )
     record_book_action("notes_prepared", book_id, {
         "chapters": len(chapters), "source": source_used,
+        "back_matter": len(report.get("back_matter", [])),
+        "oversize_chapters": report.get("oversize_chapters", 0),
     })
 
     print(f"\nReady: {out_path}")
     print(f"  {len(chapters)} chapters ({source_used})")
+    _print_slice_report(report, chapters)
     print("\nAsk Claude Code:")
     print(f'  "請讀 {out_path.relative_to(PIPELINE_DIR.parent)}，幫我生成書籍筆記，輸出到 pipeline/notes_results{"_" + tag if tag else ""}.json"')
     return out_path
@@ -237,7 +605,7 @@ def split_pending_notes(
     paths = []
     for i, batch_chapters in enumerate(batches, 1):
         batch_payload = {
-            **{k: v for k, v in data.items() if k != "chapters"},
+            **{k: v for k, v in data.items() if k not in ("chapters", "back_matter", "slice_report")},
             "batch_num": i,
             "total_batches": len(batches),
             "chapters": batch_chapters,
