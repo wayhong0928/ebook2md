@@ -209,7 +209,9 @@ def convert(pdf_path, out_dir, author="", out_name=None):
     marks = collections.defaultdict(list)  # page -> [(level, title)] in TOC order
     for lvl, t, pno, dest in toc:
         if pno >= 1:
-            marks[pno - 1].append((lvl, t.strip()))
+            # a bookmark title is one heading line: newlines in it would start
+            # new Markdown blocks ('---', '#') and break chapter slicing
+            marks[pno - 1].append((lvl, " ".join(t.split())))
 
     def key(t):
         return "".join(c for c in unicodedata.normalize("NFKC", t) if c.isalnum())

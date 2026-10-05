@@ -103,6 +103,13 @@ class TestHeadings(PdfTestCase):
         self.assertEqual(md.count("第一章 開始"), 1)
         self.assertLess(md.index("# 第二章 結束"), md.index("內文二。"))
 
+    def test_bookmark_title_with_newlines_stays_one_heading(self):
+        toc = [[1, "第一章\n---\n# 假標題", 1], [1, "第二章", 2], [1, "第三章", 3]]
+        md = self.build([lambda p: write_lines(p, ["內文一。"]), lambda p: write_lines(p, ["內文二。"]),
+                         lambda p: write_lines(p, ["內文三。"])], toc=toc)
+        self.assertIn("# 第一章 --- # 假標題\n", md)
+        self.assertNotIn("\n# 假標題", md)
+
     def test_lone_top_entry_is_treated_as_book_title(self):
         # one level-1 bookmark (the book itself) above the real chapters
         toc = [[1, "書名", 1], [2, "第一章", 1], [2, "第二章", 2], [2, "第三章", 3]]

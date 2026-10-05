@@ -59,15 +59,15 @@ def convert_one_pdf(pdf_path: Path, force: bool = False, author: str = "") -> Pa
         log.debug("Skip (already converted): %s", pdf_path.name)
         return existing
 
-    ok, why = pdf2md.text_layer(pdf_path)
-    if not ok:
-        log.warning("PDF not converted (%s): %s", why, pdf_path.name)
-        return None
-
-    MARKDOWN_STAGING.mkdir(parents=True, exist_ok=True)
-    log.info("Converting PDF: %s", pdf_path.name)
-
     try:
+        # a damaged PDF fails on open: log it and let the batch go on
+        ok, why = pdf2md.text_layer(pdf_path)
+        if not ok:
+            log.warning("PDF not converted (%s): %s", why, pdf_path.name)
+            return None
+
+        MARKDOWN_STAGING.mkdir(parents=True, exist_ok=True)
+        log.info("Converting PDF: %s", pdf_path.name)
         output_md, _ = pdf2md.convert(pdf_path, MARKDOWN_STAGING, author=author, out_name=f"{stem}.md")
         log.info("Converted PDF: %s → %s", pdf_path.name, output_md.name)
         return output_md
