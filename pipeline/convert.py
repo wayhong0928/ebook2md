@@ -1,5 +1,5 @@
 """
-Wraps epub_to_markdown to batch-convert EPUBs to Markdown.
+Wraps src/epub2md.py to batch-convert EPUBs to Markdown.
 Outputs to MARKDOWN_STAGING (待分類/) until classify assigns a category.
 Skips EPUBs that already have a corresponding MD file.
 """

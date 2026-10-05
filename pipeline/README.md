@@ -95,7 +95,7 @@ done             → 閱讀完畢
 
 ## 標準工作流程
 
-> 工作目錄：`D:\github-repo\epub_to_markdown`
+> 工作目錄：`D:\github-repo\ebook2md`
 
 ### 每次 Session 開始
 
