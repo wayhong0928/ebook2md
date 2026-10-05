@@ -4,8 +4,8 @@ from pathlib import Path
 EBOOKS_ROOT = Path(r"D:\wayhong-data\Ebooks")
 MARKDOWN_ROOT = EBOOKS_ROOT / "markdown"
 VAULT_ROOT = Path(r"D:\github-repo\Obsidian Vault\Ebook")
-EPUB2MD_SCRIPT = Path(r"D:\github-repo\epub_to_markdown\src\epub2md.py")
 PIPELINE_DIR = Path(__file__).parent
+EPUB2MD_SCRIPT = PIPELINE_DIR.parent / "src" / "epub2md.py"
 MANIFEST_PATH = PIPELINE_DIR / "manifest.json"
 
 # === Vault subfolder paths ===
