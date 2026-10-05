@@ -87,6 +87,52 @@ def _is_back_matter(title: str | None, start_ratio: float) -> bool:
     return bool(_BACK_MATTER_TITLE.match(zh) or _BACK_MATTER_TITLE_EN.match(en))
 
 
+# Notes at the end of a chapter file ('<p class="footnote">' blocks after the
+# body). Bare class 'note' and <aside> are not signals: books use them for
+# sidebars and pull quotes.
+_NOTE_MARK = "\x00NOTES\x00"
+_NOTE_TYPE = re.compile(r"\b(footnotes?|endnotes?|rearnotes?)\b")
+_NOTE_ROLE = re.compile(r"\bdoc-(footnote|endnotes?)\b")
+_NOTE_CLASS = re.compile(r"(foot|end|rear)notes?|^fn(\d+)?$|^fn[-_]\d+$|^zhu(shi|si)", re.I)
+_NOTE_ID = re.compile(r"^(foot|fn|note|footnote|endnote)[-_]?\d+$", re.I)
+_NOTE_BLOCKS = ["p", "div", "li", "dt", "dd", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "td"]
+
+
+def _is_note_block(tag, root) -> bool:
+    """tag or an ancestor (below root) carries a footnote/endnote signal."""
+    while tag is not None and tag is not root:
+        attrs = getattr(tag, "attrs", None) or {}
+        et = attrs.get("epub:type") or ""
+        role = attrs.get("role") or ""
+        cls = attrs.get("class") or []
+        if isinstance(et, list):
+            et = " ".join(et)
+        if isinstance(cls, str):
+            cls = cls.split()
+        if (_NOTE_TYPE.search(et) or _NOTE_ROLE.search(role)
+                or any(_NOTE_CLASS.search(c) for c in cls) or _NOTE_ID.match(attrs.get("id") or "")):
+            return True
+        tag = tag.parent
+    return False
+
+
+def _mark_note_tail(root) -> int | None:
+    """Insert _NOTE_MARK before the run of note blocks that ends the file and
+    return how many characters those blocks hold (None: no such run). Only a
+    run reaching the end counts: a note block followed by body text is left
+    alone."""
+    leaves = [b for b in root.find_all(_NOTE_BLOCKS)
+              if b.get_text(strip=True) and not any(x.get_text(strip=True) for x in b.find_all(_NOTE_BLOCKS))]
+    k = len(leaves)
+    while k > 0 and _is_note_block(leaves[k - 1], root):
+        k -= 1
+    if k == len(leaves):
+        return None
+    from bs4 import NavigableString
+    leaves[k].insert_before(NavigableString(_NOTE_MARK))
+    return sum(len(b.get_text("\n", strip=True)) + 1 for b in leaves[k:])
+
+
 def _chars(lines: list[str], a: int, b: int) -> int:
     return sum(len(l) for l in lines[a:b]) + max(b - a - 1, 0)
 
@@ -164,17 +210,30 @@ def _epub_doc_lines(doc):
         if title:
             mark(start, _HEADING_RANK + int(start.name[1]) if start.name[1:].isdigit() else _HEADING_RANK + 6, title)
 
+    note_chars = _mark_note_tail(root)
     lines: list[str] = []
     points: dict[int, tuple[int, str]] = {}
+    note_start = None
     for line in root.get_text("\n", strip=True).split("\n"):
-        if line in marks:
+        if line == _NOTE_MARK:
+            note_start = len(lines)
+        elif line in marks:
             idx, (rank, title) = len(lines), marks[line]
             if idx not in points or rank < points[idx][0]:
                 points[idx] = (rank, title)
         else:
             lines.append(line)
     points = {i: p for i, p in points.items() if i < len(lines)}
-    return lines, points, lead, original
+    if note_start is not None:
+        if _chars(lines, note_start, len(lines)) + 1 > note_chars + 50:
+            note_start = None  # body text outside the note blocks follows them
+        else:
+            # the '注釋' heading right above the notes goes with them
+            if note_start > 0 and _is_back_matter(lines[note_start - 1], 1.0):
+                note_start -= 1
+            if _chars(lines, 0, note_start) < MIN_CHAPTER_CHARS:
+                note_start = 0  # a notes file with a short heading on top
+    return lines, points, lead, original, note_start
 
 
 def _md_section_lines(section: str):
@@ -261,8 +320,12 @@ def _pack(lines, points, title, spans, limit):
     `limit`). Titles: 'parent／sub', or 'parent／first～last' for a group."""
     groups, cur = [], []
     for span in spans:
+        # a group under MIN_CHAPTER_CHARS (a lone heading before a long
+        # section) goes with the next span even past `limit`; _refine splits
+        # that group again
         if cur and (_chars(lines, cur[0][0], cur[-1][1]) >= PACK_MIN
-                    or _chars(lines, cur[0][0], span[1]) > limit):
+                    or (_chars(lines, cur[0][0], span[1]) > limit
+                        and _chars(lines, cur[0][0], cur[-1][1]) >= MIN_CHAPTER_CHARS)):
             groups.append(cur)
             cur = []
         cur.append(span)
@@ -314,12 +377,63 @@ def _refine(lines, points, title, a, b, limit, how=None):
             for k, (x, y) in enumerate(parts, 1)]
 
 
+def _cut_out_notes(lines, segs, notes, total, limit):
+    """Take trailing-note ranges out of the chapters: [(title, ranges, is_notes)].
+    A chapter spread over several files, each ending in notes, keeps its body
+    pieces together as one chapter of several ranges (as long as they fit in
+    `limit`). A body piece under MIN_CHAPTER_CHARS next to notes (an image
+    caption) goes with the notes."""
+    out = []
+    for title, a, b in segs:
+        parts, x = [], a
+        if not _is_back_matter(title, _chars(lines, 0, a) / total):
+            for na, nb in notes:
+                na, nb = max(na, a), min(nb, b)
+                if na >= nb:
+                    continue
+                if x < na:
+                    parts.append([x, na, False])
+                parts.append([na, nb, True])
+                x = nb
+        if not parts:
+            out.append((title, [(a, b)], False))
+            continue
+        if x < b:
+            parts.append([x, b, False])
+        for p in parts:
+            if not p[2] and _chars(lines, p[0], p[1]) < MIN_CHAPTER_CHARS:
+                p[2] = True
+        merged = []
+        for p in parts:  # join neighbours of the same kind
+            if merged and merged[-1][2] == p[2]:
+                merged[-1][1] = p[1]
+            else:
+                merged.append(p)
+        groups, cur, size = [], [], 0
+        for x, y, is_notes in merged:
+            if is_notes:
+                out.append((title, [(x, y)], True))
+                continue
+            n = _chars(lines, x, y)
+            if cur and size + 1 + n > limit:
+                groups.append(cur)
+                cur, size = [], 0
+            size += n + (1 if cur else 0)
+            cur.append((x, y))
+        if cur:
+            groups.append(cur)
+        for k, g in enumerate(groups, 1):
+            out.append((f"{title}（{k}/{len(groups)}）" if title and len(groups) > 1 else title, g, False))
+    return out
+
+
 def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
-    """docs: [(lines, points, lead_title, base_rank, original_text)].
+    """docs: [(lines, points, lead_title, base_rank, original_text[, note_start])].
+    note_start: line index where the file's trailing notes begin (None: none).
     Returns (chapters, report)."""
     report = {
         "source": source, "documents": len(docs),
-        "skipped_short_documents": 0, "skipped_short_chars": 0,
+        "skipped_empty_documents": 0, "note_tails": 0, "note_tail_chars": 0,
         "toc_resplit_documents": 0, "toc_resplit_chapters": 0,
         "oversize_chapters": 0,
         "oversize_split": {"toc_sub": 0, "heading": 0, "paragraph": 0},
@@ -331,16 +445,19 @@ def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
     points: dict[int, tuple[int, str]] = {}
     starts: list[tuple[int, str | None]] = []
     kept: list[str] = []
-    pending_title = None  # TOC title of a skipped chapter-title page
+    notes: list[tuple[int, int]] = []  # trailing-note line ranges
+    pending_title = None  # TOC title of an empty chapter-title page (an image)
     absorb = False  # previous kept file was a short titled page
-    for d, (doc_lines, doc_points, lead_title, base_rank, original) in enumerate(docs):
+    for d, (doc_lines, doc_points, lead_title, base_rank, original, *rest) in enumerate(docs):
+        note_start = rest[0] if rest else None
         report["original_chars"] += len(original)
         if "\n".join(doc_lines) != original:
             report["self_check"] = False
             log.error("slice self-check: document %d text changed while marking split points", d)
-        if len(original) < MIN_CHAPTER_CHARS:
-            report["skipped_short_documents"] += 1
-            report["skipped_short_chars"] += len(original)
+        if not original.strip():
+            # Only empty files are skipped; a short one (a part title page, a
+            # 150-character section of an illustrated book) is book text too.
+            report["skipped_empty_documents"] += 1
             if lead_title:
                 pending_title = lead_title
             continue
@@ -349,9 +466,13 @@ def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
         if absorb and lead_title is None and cuts and cuts[0][0] == 0:
             cuts = cuts[1:]  # body of the title page before it: same chapter
         # A titled page this short is the chapter's title page (title +
-        # epigraph); the next untitled file is that chapter's body.
-        absorb = bool(lead_title) and len(original) < PART_TITLE_MAX
+        # epigraph); the next untitled file is that chapter's body. A short
+        # untitled file in between (an image caption) does not end that.
+        absorb = (bool(lead_title) and len(original) < PART_TITLE_MAX) or (
+            absorb and lead_title is None and not cuts and len(original) < MIN_CHAPTER_CHARS)
         pending_title = None
+        if note_start is not None and note_start < len(doc_lines):
+            notes.append((off + note_start, off + len(doc_lines)))
         if sum(1 for i, _ in cuts if i > 0) > 0:
             report["toc_resplit_documents"] += 1
             report["toc_resplit_chapters"] += len(cuts)
@@ -371,14 +492,27 @@ def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
 
     total = _chars(lines, 0, len(lines)) or 1
     chapters, pieces = [], []
-    for title, a, b in segs:
+    for title, ranges, is_notes in _cut_out_notes(lines, segs, notes, total, limit):
+        a, b = ranges[0][0], ranges[-1][1]
         size = _chars(lines, a, b)
+        if is_notes:
+            report["back_matter"].append({"title": f"{title or '（無標題）'}：章末注釋", "char_count": size,
+                                          "kind": "chapter_notes"})
+            report["back_matter_chars"] += size
+            report["note_tails"] += 1
+            report["note_tail_chars"] += size
+            pieces.append((a, b))
+            continue
         if _is_back_matter(title, _chars(lines, 0, a) / total):
             report["back_matter"].append({"title": title, "char_count": size})
             report["back_matter_chars"] += size
             pieces.append((a, b))
             continue
-        refined = _refine(lines, points, title, a, b, limit)
+        if len(ranges) > 1:
+            # body pieces around notes, already packed under `limit`
+            refined = [[title, ranges, None]]
+        else:
+            refined = [[t, [(x, y)], how] for t, x, y, how in _refine(lines, points, title, a, b, limit)]
         if len(refined) > 1:
             report["oversize_chapters"] += 1
             same = [r[0] for r in refined]
@@ -387,11 +521,11 @@ def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
                     if same.count(r[0]) > 1 and r[0]:
                         nth = same[:k + 1].count(r[0])
                         r[0] = f"{r[0]}（{nth}/{same.count(r[0])}）"
-        for t, x, y, how in refined:
+        for t, rs, how in refined:
             if how:
                 report["oversize_split"][how] += 1
-            content = "\n".join(lines[x:y])
-            pieces.append((x, y))
+            content = "\n".join("\n".join(lines[x:y]) for x, y in rs)
+            pieces += rs
             ch = {
                 "chapter_num": len(chapters) + 1,
                 "title": t or f"第 {len(chapters) + 1} 節",
@@ -405,7 +539,9 @@ def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
             chapters.append(ch)
             report["chapter_chars"] += len(content)
 
-    # Chapters + back matter must tile the book exactly, in order.
+    # Chapters + back matter must tile the book exactly. A chapter can hold
+    # several ranges (its notes taken out), so check in position order.
+    pieces.sort()
     edges = [p for ab in pieces for p in ab]
     if not pieces or edges[0] != 0 or edges[-1] != len(lines) or any(
             edges[k] != edges[k + 1] for k in range(1, len(edges) - 1, 2)):
@@ -425,10 +561,10 @@ def _slice_from_epub(epub_path: Path) -> tuple[list[dict], dict]:
         extractor = EpubExtractor(str(epub_path))
         docs = []
         for doc in extractor.get_spine_documents():
-            lines, points, lead, original = _epub_doc_lines(doc)
+            lines, points, lead, original, note_start = _epub_doc_lines(doc)
             toc_ranks = [r for r, _ in points.values() if r < _HEADING_RANK]
             base_rank = lead.depth if lead else (min(toc_ranks) if toc_ranks else None)
-            docs.append((lines, points, lead.title if lead else None, base_rank, original))
+            docs.append((lines, points, lead.title if lead else None, base_rank, original, note_start))
         return _assemble(docs, source="epub")
     except Exception as e:
         log.error("EPUB parsing failed: %s", e)
@@ -445,9 +581,8 @@ def _slice_from_md(md_text: str) -> tuple[list[dict], dict]:
         # titled '書名頁' or '作者序' is book text
         if not section or re.match(r"^#\s*(書名|作者|轉換日期)[：:]", section):
             continue
-        clean = re.sub(r"\[圖片[^\]]*\]", "", section).strip()
-        if len(clean) < MIN_CHAPTER_CHARS:
-            continue
+        if not re.sub(r"\[圖片[^\]]*\]", "", section).strip():
+            continue  # image placeholders only
         lines, points = _md_section_lines(section)
         docs.append((lines, points, None, None, section))
     return _assemble(docs, source="md")
@@ -457,15 +592,17 @@ def _print_slice_report(report: dict, chapters: list[dict]) -> None:
     o = report["oversize_split"]
     print(f"  切片自檢：{'通過' if report['self_check'] else '失敗'}"
           f"（原文 {report['original_chars']:,} 字 = 章節 {report['chapter_chars']:,}"
-          f" + 書末附屬 {report['back_matter_chars']:,} + 過短略過 {report['skipped_short_chars']:,}"
-          f"，換行另計）")
+          f" + 書末附屬 {report['back_matter_chars']:,}，換行另計；空白檔略過 {report['skipped_empty_documents']} 個）")
+    if report.get("note_tails"):
+        print(f"  章末注釋移出章節（列在書末附屬）：{report['note_tails']} 段，共 {report['note_tail_chars']:,} 字")
     if report["toc_resplit_documents"]:
         print(f"  依 TOC 錨點重新分章：{report['toc_resplit_documents']} 個檔切成 {report['toc_resplit_chapters']} 章")
     if report["oversize_chapters"]:
         print(f"  超過 {MAX_CHARS_PER_CHAPTER:,} 字的 {report['oversize_chapters']} 章再拆，拆出：依 TOC 小節 {o['toc_sub']} 章、依標題 {o['heading']} 章、依段落 {o['paragraph']} 章")
-    if report["back_matter"]:
-        print(f"  書末附屬（不寫摘要，不放進 chapters）：{len(report['back_matter'])} 段")
-        for b in report["back_matter"]:
+    titled = [b for b in report["back_matter"] if b.get("kind") != "chapter_notes"]
+    if titled:
+        print(f"  書末附屬（不寫摘要，不放進 chapters）：{len(titled)} 段")
+        for b in titled:
             print(f"    - {b['title']}（{b['char_count']:,} 字）")
     if report["still_oversize"]:
         print(f"  [warn] 仍超過上限（單一段落就超過，沒有可切的位置）：")

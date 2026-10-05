@@ -140,6 +140,60 @@ class TestEpubSlicing(SliceTestBase):
         self.assertIn("後文", chapters[0]["content"])
 
 
+    def test_trailing_footnotes_leave_the_chapter(self):
+        notes_html = "".join(f'<p class="footnote" id="foot-{i}">{i}　某作者，《某書》，頁{i}。</p>' for i in range(60))
+        files = [("c1.xhtml", "<h1>第一章</h1>" + paras(5000) + "<h3>注釋</h3>" + notes_html),
+                 ("c2.xhtml", "<h1>第二章</h1>" + paras(5000))]
+        toc = [epub.Link("c1.xhtml", "第一章", "c1"), epub.Link("c2.xhtml", "第二章", "c2")]
+        chapters, report = self.slice(files, toc)
+        self.assertEqual([c["title"] for c in chapters], ["第一章", "第二章"])
+        self.assertNotIn("某作者", chapters[0]["content"])
+        self.assertFalse(chapters[0]["content"].rstrip().endswith("注釋"))
+        self.assertEqual(report["note_tails"], 1)
+        self.assertEqual(report["back_matter"][0]["kind"], "chapter_notes")
+
+    def test_note_class_followed_by_body_text_stays(self):
+        body = ("<h1>第一章</h1>" + paras(3000) + '<div class="footnote"><p>側欄說明文字。</p></div>'
+                + paras(3000))
+        chapters, report = self.slice([("c1.xhtml", body)], [epub.Link("c1.xhtml", "第一章", "c1")])
+        self.assertIn("側欄說明文字", chapters[0]["content"])
+        self.assertEqual(report["note_tails"], 0)
+
+    def test_bare_note_class_and_aside_are_not_notes(self):
+        body = "<h1>第一章</h1>" + paras(3000) + '<p class="note">引言框。</p><aside><p>補充。</p></aside>'
+        chapters, report = self.slice([("c1.xhtml", body)], [epub.Link("c1.xhtml", "第一章", "c1")])
+        self.assertIn("引言框", chapters[0]["content"])
+        self.assertEqual(report["note_tails"], 0)
+
+    def test_chapter_continuing_after_its_notes_stays_one_chapter(self):
+        notes_html = '<div epub:type="footnotes">' + "".join(f"<p>{i} 注文內容。</p>" for i in range(80)) + "</div>"
+        files = [("a.xhtml", "<h1>第一章</h1>" + paras(4000) + notes_html), ("a2.xhtml", paras(4000)),
+                 ("b.xhtml", "<h1>第二章</h1>" + paras(3000))]
+        toc = [epub.Link("a.xhtml", "第一章", "a"), epub.Link("b.xhtml", "第二章", "b")]
+        chapters, report = self.slice(files, toc)
+        self.assertEqual([c["title"] for c in chapters], ["第一章", "第二章"])
+        self.assertNotIn("注文內容", chapters[0]["content"])
+        self.assertGreater(chapters[0]["char_count"], 7500)
+        self.assertEqual(report["note_tails"], 1)
+
+    def test_short_files_are_kept_not_skipped(self):
+        files = [("c1.xhtml", "<h1>第一章</h1>" + paras(3000)), ("p.xhtml", "<p>一段很短的小節內容。</p>"),
+                 ("c2.xhtml", "<h1>第二章</h1>" + paras(3000))]
+        toc = [epub.Link("c1.xhtml", "第一章", "c1"), epub.Link("c2.xhtml", "第二章", "c2")]
+        chapters, report = self.slice(files, toc)
+        self.assertEqual([c["title"] for c in chapters], ["第一章", "第二章"])
+        self.assertIn("很短的小節", chapters[0]["content"])
+        self.assertEqual(report["skipped_empty_documents"], 0)
+        self.assertGreaterEqual(report["chapter_chars"], report["original_chars"])
+
+    def test_lone_heading_before_a_long_section_is_not_a_chapter(self):
+        body = ("<h1>第一章</h1>" + paras(6000) + "<h2>三、目的</h2><p>短句。</p><h2>四、方法</h2>" + paras(42000)
+                + "<h2>五、結論</h2>" + paras(6000))
+        chapters, _ = self.slice([("c1.xhtml", body)], [epub.Link("c1.xhtml", "第一章", "c1")])
+        self.assertTrue(all(c["char_count"] >= notes.MIN_CHAPTER_CHARS for c in chapters),
+                        [(c["title"], c["char_count"]) for c in chapters])
+
+
 class TestBackMatterTitles(unittest.TestCase):
     def test_titles(self):
         for t in ["參考書目", "主要參考文獻", "參考書目及注釋", "附錄2：網路資源與延伸閱讀", "徵引書目",
