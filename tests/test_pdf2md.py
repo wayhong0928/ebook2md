@@ -39,11 +39,11 @@ class PdfTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def build(self, pages, toc=None):
+    def build(self, pages, toc=None, width=W):
         """pages: [callable(page)]; returns the converted Markdown."""
         doc = fitz.open()
         for draw in pages:
-            draw(doc.new_page(width=W, height=H))
+            draw(doc.new_page(width=width, height=H))
         if toc:
             doc.set_toc(toc)
         path = os.path.join(self.dir, "book.pdf")
@@ -69,6 +69,31 @@ class TestParagraphs(PdfTestCase):
         self.assertIn(FULL + "跨頁接續的句子。", md)
         self.assertEqual(self.stats["page_joins"], 1)
 
+    def test_bullet_starts_a_paragraph(self):
+        md = self.build([lambda p: write_lines(p, [FULL, "◆" + FULL[1:], "接續。", "◆第二項。"])])
+        self.assertIn(FULL + "\n\n◆" + FULL[1:] + "接續。\n\n◆第二項。", md)
+
+    def test_two_column_ragged_english(self):
+        # left column first; ragged-right lines of one block run on
+        left = [["Left column first paragraph runs", "over three lines that stop", "short of the edge."],
+                ["Second left paragraph has its", "own block and two more", "lines of text here."]]
+        right = [["Right column paragraph comes", "after the whole left column", "in reading order."],
+                 ["Another right paragraph that is", "long enough to count as", "column text too."]]
+
+        def draw(p):
+            # right column drawn first: block order alone would put it first
+            for x, paras in ((320, right), (30, left)):
+                y = 60
+                for para in paras:
+                    for line in para:
+                        p.insert_text((x, y), line, fontname="helv", fontsize=10)
+                        y += 13
+                    y += 20
+        md = self.build([draw], width=600)
+        self.assertIn("Left column first paragraph runs over three lines that stop short of the edge.\n", md)
+        self.assertIn("Right column paragraph comes after the whole left column in reading order.\n", md)
+        self.assertLess(md.index("lines of text here."), md.index("Right column paragraph"))
+
     def test_english_lines_and_hyphenation(self):
         self.assertEqual(pdf2md.join_lines(["infor-", "mation is"]), "information is")
         self.assertEqual(pdf2md.join_lines(["hello", "world"]), "hello world")
@@ -89,6 +114,31 @@ class TestFurniture(PdfTestCase):
         for n in range(1, 7):
             self.assertIn(f"第{n}頁的內文。", body)
             self.assertNotIn(f"\n{n}\n", body)
+
+    def test_long_english_footer_dropped(self):
+        footer = "Annual Outlook Report for Testing Only | May 2025"  # over 40 characters
+
+        def page(n):
+            def draw(p):
+                write_lines(p, [f"第{n}頁的內文。"])
+                p.insert_text((LEFT, H - 12), f"{n}  {footer}", fontname="helv", fontsize=7)
+            return draw
+        md = self.build([page(n) for n in range(1, 7)])
+        self.assertNotIn("Annual Outlook", md)
+
+    def test_vertical_head_in_body_size_dropped_and_paragraph_runs_on(self):
+        # OCR gives the running head the body size; it sits far right and starts higher
+        def page(cols):
+            def draw(p):
+                write_column(p, 280, "書眉文字", top=40)
+                for x, chars in zip((230, 210, 190), cols):
+                    write_column(p, x, chars)
+            return draw
+        col = "甲乙丙丁戊己庚辛壬癸子丑"  # 12 characters: paragraphs over 30 set the body size
+        md = self.build([page([col, col, col[:-1]]), page(["寅卯辰。" + col[4:], col, col[:-1] + "。"]),
+                         page([col, col, col[:-1] + "。"])])
+        self.assertNotIn("書眉", md)
+        self.assertIn(col[:-1] + "寅卯辰。", md)
 
 
 class TestHeadings(PdfTestCase):
@@ -131,6 +181,17 @@ class TestVertical(PdfTestCase):
         md = self.build([draw])
         self.assertIn("甲乙丙丁戊己庚。", md)
         self.assertEqual(self.stats["vertical_pages"], 1)
+
+    def test_sideways_bracket_placed_by_its_lower_edge(self):
+        # real PDFs give a sideways bracket a box that starts above the glyph,
+        # higher than the character before it
+        def draw(p):
+            write_column(p, 250, "驚人的")
+            write_column(p, 250, "專業性。", top=60 + 4 * SIZE * 1.2)
+            p.insert_text((250 + SIZE * 0.4, 60 + 2 * SIZE * 1.2 - SIZE * 0.3), "(", fontname="helv", fontsize=SIZE)
+            write_column(p, 230, "後文。")
+        md = self.build([draw])
+        self.assertIn("驚人的(專業性。", md)
 
     def test_side_tab_does_not_flip_text_page(self):
         def draw(p):
