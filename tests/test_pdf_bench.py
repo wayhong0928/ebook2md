@@ -13,7 +13,8 @@ cases.json:
         {"id": "...", "type": "absent", "text": "..."},          # nowhere in the book
         {"id": "...", "type": "line", "text": "..."},            # a whole line (heading or paragraph) of its own
         {"id": "...", "type": "no_line", "text": "..."},         # no line equal to it (page numbers, running heads)
-        {"id": "...", "type": "order", "before": "...", "after": "..."}
+        {"id": "...", "type": "order", "before": "...", "after": "..."},
+        {"id": "...", "type": "max_lines", "regex": "...", "max": 0}  # whole-book count of lines matching
     ]}}}
 Optional on present: "max_diffs" (edit distance allowed, default 0).
 Text is compared after NFKC; whitespace is ignored except a single space
@@ -87,6 +88,9 @@ def check(md_lines, c):
         if a < 0 or b < 0:
             return False, f"missing: {'before' if a < 0 else 'after'}"
         return a < b, "" if a < b else "wrong order"
+    if t == "max_lines":
+        hits = [l for l in md_lines if re.search(c["regex"], l)]
+        return len(hits) <= c["max"], "" if len(hits) <= c["max"] else f"{len(hits)} lines, e.g. {hits[0][:30]}"
     raise ValueError(f"unknown check type {t}")
 
 

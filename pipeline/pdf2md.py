@@ -125,10 +125,14 @@ def page_items(page):
             cx, w = (v[0] + v[2]) / 2, max(v[2] - v[0], 1)
             if not any(is_cjk(ch) for ch in v[4]):
                 w = max(w, typ)
+            # a column's centre is the median of what it holds so far: its
+            # first item may be punctuation set off to the right
             if cols and abs(cols[-1]["cx"] - cx) < w * 0.6:
                 cols[-1]["items"].append((v[1], v))
+                cols[-1]["xs"].append(cx)
+                cols[-1]["cx"] = statistics.median(cols[-1]["xs"])
             else:
-                cols.append({"cx": cx, "items": [(v[1], v)]})
+                cols.append({"cx": cx, "xs": [cx], "items": [(v[1], v)]})
         # digits, Latin letters, brackets and spaces set sideways inside a
         # column (縱中橫) belong to that column at their height. Their box
         # sits up to half a character above the glyph, so they are placed by
@@ -175,6 +179,11 @@ def page_items(page):
                               text, statistics.median(c["size"] for c in cur), open_end, False))
 
         body_top = min((c["top"] for c in cols if not c.get("edge")), default=0)
+        # median, not max: OCR text layers let full columns end a couple of
+        # characters apart, and squeeze some columns so their last character
+        # sits higher; a short column must also hold fewer characters
+        body_bottom = statistics.median([c["items"][-1][3] for c in cols if not c.get("edge")] or [0])
+        body_len = statistics.median([len(c["text"]) for c in cols if not c.get("edge")] or [0])
         cur = []
         for c in cols:
             if c.get("edge"):
@@ -192,6 +201,12 @@ def page_items(page):
                 flush_v(cur)
                 cur = []
             cur.append(c)
+            # a column that stops short after a full stop closes its
+            # paragraph (notes start with a hanging number, not an indent)
+            if (body_bottom - c["items"][-1][3] > c["size"] * 1.5 and len(c["text"]) < body_len - 2
+                    and re.search(r"[。！？!?」』﹂]\s*$", c["text"])):
+                flush_v(cur)
+                cur = []
         if cur:
             flush_v(cur)
         # other horizontal bits on a vertical page (page numbers, running heads) kept as their own lines
