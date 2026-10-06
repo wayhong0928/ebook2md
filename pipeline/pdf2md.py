@@ -471,10 +471,12 @@ def convert(pdf_path, out_dir, author="", out_name=None):
                 first = False
                 stats["toc_placed"] += len(at[j])
                 continue
-            if p.edge:
-                # vertical-page head or sideways bit that was not dropped: its
-                # own line, and a paragraph from the previous page still runs
-                # on into the first body paragraph after it
+            if p.edge or (size < body * 0.5 and not first):
+                # vertical-page head or sideways bit that was not dropped, or
+                # type under half the body size after the page's body (OCR
+                # noise in the margin): its own line, and a paragraph from the
+                # previous page still runs on into the first body paragraph
+                # after it
                 out.append(text + "\n")
                 continue
             if not toc and not vertical and size >= body * 1.25 and len(text) <= 30:
