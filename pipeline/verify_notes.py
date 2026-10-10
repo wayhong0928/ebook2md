@@ -118,7 +118,7 @@ def check_concept_quote_equals_title(path: Path, text: str, issues: list):
     elif quote == title:
         issues.append({
             "file": str(path), "line": None, "type": "quote_equals_title",
-            "detail": f"原文引言與標題完全相同（「{title}」），疑似捏造引言，SPEC_03:35 記過的事故模式",
+            "detail": f"原文引言與標題完全相同（「{title}」），疑似捏造引言，曾發生過的事故模式",
         })
 
 
