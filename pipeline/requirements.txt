@@ -1,2 +1,2 @@
-# 相依套件統一列在根目錄
+# All dependencies are listed in the root requirements.txt
 -r ../requirements.txt
