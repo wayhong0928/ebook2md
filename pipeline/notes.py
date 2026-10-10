@@ -492,7 +492,9 @@ def print_stale_review(book_id: str, results_path: Path = NOTES_RESULTS_FILE) ->
 # ---------------------------------------------------------------------------
 
 def _render_book_notes(entry: dict, classification: dict, chapters: list[dict], book_summary: str, known_concepts: set[str] | None = None) -> str:
-    title = classification.get("title") or Path(entry.get("epub_path", "")).stem
+    # PDF 書的 manifest 是 epub_path: None，書名改從 md／pdf 路徑取
+    source_path = entry.get("epub_path") or entry.get("md_path") or entry.get("pdf_path") or ""
+    title = classification.get("title") or Path(source_path).stem
     author = classification.get("author") or entry.get("author", "")
     category = classification.get("category") or entry.get("category", "")
     sub_cat_yaml = json.dumps(classification.get("sub_categories", []), ensure_ascii=False)
@@ -537,6 +539,7 @@ def _render_book_notes(entry: dict, classification: dict, chapters: list[dict], 
                 all_concepts.append(c)
                 seen_concepts.add(c)
 
+    source_pdf_line = f'source_pdf: "{entry["pdf_path"]}"\n' if entry.get("pdf_path") else ""
     concepts_links = "\n".join(f"- {_link_or_plain(c)}" for c in all_concepts) or "*（無）*"
     linkable_concepts = [_safe_title(c) for c in all_concepts if known_concepts is None or _safe_title(c) in known_concepts]
 
@@ -550,8 +553,9 @@ def _render_book_notes(entry: dict, classification: dict, chapters: list[dict], 
         f"{volume_line}"
         f"tags:\n{tags_yaml}\n"
         f'core_premise: "{core_premise}"\n'
-        f'source_epub: "{entry.get("epub_path", "")}"\n'
-        f'source_md: "{entry.get("md_path", "")}"\n'
+        f'source_epub: "{entry.get("epub_path") or ""}"\n'
+        f"{source_pdf_line}"
+        f'source_md: "{entry.get("md_path") or ""}"\n'
         f'date_added: "{today}"\n'
         f'status: "notes_generated"\n'
         f"---\n\n"
