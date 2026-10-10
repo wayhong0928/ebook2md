@@ -134,7 +134,12 @@ class NoPersonalPathsTest(unittest.TestCase):
         files = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.split()
         if not files:
             self.skipTest("not a git checkout")
-        pattern = re.compile(r"wayhong-data|[A-Z]:[\\/]+github-repo", re.I)
+        # any absolute drive path except the README examples, plus the owner's
+        # configured locations when this checkout has them
+        local = ROOT / "pipeline" / "local_config.json"
+        own = [re.escape(str(v)) for v in json.loads(local.read_text(encoding="utf-8")).values()] if local.exists() else []
+        drive = r"(?<![A-Za-z])[A-Za-z]:[\\/](?!Books/|Notes/)\w"
+        pattern = re.compile("|".join([drive] + own), re.I)
         hits = []
         for f in files:
             p = ROOT / f

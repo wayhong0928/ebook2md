@@ -37,7 +37,7 @@ pipeline/
 <vault_root>\   （位置設在 pipeline/local_config.json，見下方）
 ├── CLAUDE.md               # 系統路徑速查與 CLI 指令手冊
 ├── 00_Inbox\               # 低信心度分類暫存，人工確認後移走
-├── 10_Books\               # 書籍筆記（依 15 個分類 + 系列子資料夾）
+├── 10_Books\               # 書籍筆記（依 16 個分類 + 系列子資料夾）
 ├── 20_Concepts\            # 概念卡片（Zettelkasten 永久筆記）
 ├── 30_MOC\                 # 主題索引頁（Map of Content）
 ├── 40_Reflections\         # 個人心得、閱讀文章草稿
@@ -175,7 +175,7 @@ python pipeline/run_pipeline.py history --book-id "書名"
 
 | 規則 | 說明 |
 |------|------|
-| 15 個核心分類 | 人物傳記、個人成長、商業管理、工作技能、心理學、思考方法、投資理財、文學小說、歷史政治、社會科學、資訊科技、運動科學、醫療專業、生活風格、尚未歸檔 |
+| 16 個核心分類 | 人物傳記、個人成長、商業管理、工作技能、心理學、思考方法、投資理財、文學小說、歷史政治、社會科學、自然科普、資訊科技、運動科學、醫療專業、生活風格、尚未歸檔（以 `config.py` 的 `VALID_CATEGORIES` 為準） |
 | 信心度 < 0.7 | 筆記輸出至 `00_Inbox/`，人工確認後用 `inbox-move` 移走 |
 | 跨領域書籍 | 主分類 + `sub_categories` 補充次要領域 |
 | 全新領域 | `category: 尚未歸檔`，`new_category_suggestion` 提供建議 |

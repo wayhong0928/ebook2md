@@ -1,17 +1,17 @@
 """Ebook 筆記生成 pipeline 的輸出驗證腳本。
 
 只偵測、不修改任何檔案；偵測到的問題交給人／Claude 決定怎麼修。
-涵蓋的已知失敗模式（見 Obsidian Vault\\Ebook\\claude-notes\\SPEC_03_知識管理推進.md）：
+涵蓋的已知失敗模式：
 - 空白 wikilink（[[]]）
 - 斷 link（wikilink 指向不存在的檔案）
 - CJK / Unicode 編碼損毀
 - 內容疑似截斷（長度啟發式，非精確判斷，可能有誤報）
-- 概念卡「## 原文」引言與標題完全相同（疑似捏造引言，SPEC_03:35 明講的既有事故模式）
+- 概念卡「## 原文」引言與標題完全相同（疑似捏造引言，曾發生過的事故模式）
 
 用法：
     python verify_notes.py                # 全庫掃描，人類可讀報告
     python verify_notes.py --json          # 全庫掃描，輸出 JSON
-    python verify_notes.py --book 深度工作  # 只掃書名含這個關鍵字的書
+    python verify_notes.py --book 關鍵字    # 只掃書名含這個關鍵字的書
 """
 import re
 import sys
