@@ -2,6 +2,14 @@
 
 v1.3.0 之前沒有打 tag。舊版本是事後依 commit 歷史整理的，v1.2 這條分界也是事後才訂。
 
+## v1.5.0（2026-10-10）
+
+這一版整理工程面，轉出來的 md 跟 v1.4.0 逐字相同。
+
+- 相依套件合成根目錄一份 `requirements.txt` 並釘死版本，PyMuPDF 補進來；`pipeline/requirements.txt` 改成引用它。程式沒用到的 anthropic、tqdm 移除。
+- 新增 GitHub Actions：push 與 pull request 時跑版本庫裡的測試（Linux 3.10／3.12、Windows 3.11）。
+- `docs/` 三份文件開頭標明描述的是 v1.3.0 的 EPUB 轉檔。
+
 ## v1.4.0（2026-10-10）
 
 這一版加量測與防線，轉出來的 md 跟 v1.3.0 逐字相同。

@@ -1,7 +1,2 @@
-EbookLib
-BeautifulSoup4
-markdownify
-Streamlit
-anthropic
-tqdm
-PyMuPDF
+# 相依套件統一列在根目錄
+-r ../requirements.txt

@@ -1,5 +1,7 @@
 # 技術堆疊與依賴套件說明 (Technical Stack & Dependencies)
 
+> 本文件描述 v1.3.0 的 EPUB 轉檔（`src/`）。PDF 轉檔（`pipeline/pdf2md.py`）與章節切分（`pipeline/notes.py`）不在本文件範圍；之後的變動見 `CHANGELOG.md`。
+
 本文檔詳細列出 `Epub2NotebookLM-Converter` 專案所使用的關鍵技術與第三方套件，以及選擇它們的原因。
 
 ## 核心語言

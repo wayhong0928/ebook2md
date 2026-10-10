@@ -1,4 +1,11 @@
-EbookLib
-BeautifulSoup4
-markdownify
-Streamlit
+# 版本釘死：同一份程式要轉出同一份 md。升級任何一個套件前，
+# 先跑全書庫基準（scripts/baseline.py measure + check）確認輸出沒變差。
+EbookLib==0.20
+beautifulsoup4==4.14.3
+soupsieve==2.8.1
+markdownify==1.2.2
+lxml==6.0.2
+six==1.17.0
+PyMuPDF==1.27.2.2
+streamlit==1.53.0
+pytest==9.0.2

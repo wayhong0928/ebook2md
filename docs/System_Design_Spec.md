@@ -1,5 +1,7 @@
 # 系統開發規格書 (System Design Specification)
 
+> 本文件描述 v1.3.0 的 EPUB 轉檔（`src/`）。PDF 轉檔（`pipeline/pdf2md.py`）與章節切分（`pipeline/notes.py`）不在本文件範圍；之後的變動見 `CHANGELOG.md`。
+
 ## 專案名稱：Epub2NotebookLM-Converter
 
 ### 1. 簡介 (Introduction)

@@ -1,5 +1,7 @@
 # 系統功能 API 參考手冊 (API Reference)
 
+> 本文件描述 v1.3.0 的 EPUB 轉檔（`src/`）。PDF 轉檔（`pipeline/pdf2md.py`）與章節切分（`pipeline/notes.py`）不在本文件範圍；之後的變動見 `CHANGELOG.md`。
+
 本文檔針對開發者，詳細說明 `src/` 目錄下各核心模組的類別與函式設計。
 
 ## 1. 模組：`extractor.py` (讀取與提取)

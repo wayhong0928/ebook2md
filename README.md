@@ -1,6 +1,6 @@
 # ebook2md
 
-**專案版本： v1.4.0**
+**專案版本： v1.5.0**
 
 把 EPUB 與有文字層的 PDF 電子書轉成 Markdown 的純 Python 工具，不呼叫任何外部 AI API，靠程式邏輯把電子書轉成乾淨、結構化的 Markdown。EPUB 用 `src/epub2md.py`；PDF 用 `pipeline/pdf2md.py`，支援直排中文（見下方「PDF 書」）。網頁介面目前只支援 EPUB。
 
@@ -70,6 +70,8 @@ python -m venv venv
 # 安裝依賴
 pip install -r requirements.txt
 ```
+
+`requirements.txt` 的版本都釘死，同一份程式才會轉出同一份 md；升級套件前先跑全書庫基準（見下方第 5 節）。每次 push，GitHub Actions 會在 Linux（Python 3.10、3.12）與 Windows（Python 3.11）跑一次版本庫裡的測試。
 
 ### 2. 使用網頁介面 (推薦)
 
