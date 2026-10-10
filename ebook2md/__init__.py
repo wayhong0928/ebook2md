@@ -7,10 +7,11 @@ books to chapters.
 The output format is described in docs/output_format.md.
 """
 import functools
+import re
 import subprocess
 from pathlib import Path
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 
 @functools.lru_cache(maxsize=None)
@@ -29,6 +30,19 @@ def converter_version() -> str:
         return f"ebook2md {__version__} ({head.stdout.strip()}{'+dirty' if dirty else ''})"
     except (OSError, subprocess.SubprocessError):
         return f"ebook2md {__version__}"
+
+
+# C0 controls except tab and newline, DEL, C1 controls, and a CR that is not
+# part of CRLF. Books carry them in from the source: EPUB numeric entities
+# such as &#142; left by a publisher's encoding conversion (an e-reader shows
+# nothing there), Symbol-font bullets and tab leaders in PDF text layers, a
+# stray CR inside a link. None has a reliable visible equivalent.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
+
+
+def strip_control_chars(text: str) -> str:
+    """Drop the control characters above; tab, newline and CRLF stay."""
+    return _CONTROL_CHARS.sub("", text)
 
 
 def front_matter(title: str, author: str, date: str) -> str:

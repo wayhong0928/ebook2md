@@ -113,14 +113,6 @@ class CliTest(unittest.TestCase):
         # the version line is part of the converter's own head block, not a chapter
         self.assertEqual([c["title"] for c in data["chapters"]], ["第1章", "第2章", "第3章"])
 
-    def test_old_entry_point_still_works_and_warns(self):
-        e = make_epub(self.dir / "book.epub")
-        r = subprocess.run([sys.executable, str(ROOT / "src" / "epub2md.py"), str(e), str(self.dir), "-o", "old.md"],
-                           capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("deprecated", r.stderr)
-        self.assertTrue((self.dir / "old.md").exists())
-
     def test_version(self):
         r = run("--version")
         self.assertEqual(r.stdout.strip(), f"ebook2md {ebook2md.__version__}")

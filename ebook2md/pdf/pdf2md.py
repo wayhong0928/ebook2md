@@ -21,7 +21,7 @@ from pathlib import Path
 
 import fitz
 
-from .. import front_matter
+from .. import front_matter, strip_control_chars
 
 MARGIN = 0.08  # top/bottom share of the page always treated as header/footer zone
 
@@ -500,6 +500,10 @@ def convert(pdf_path, out_dir, author="", out_name=None):
             open_idx = at_idx if open_end else None
     doc.close()  # Windows keeps an open PDF locked
     md = "\n".join(out)
+    # a line holding only a Symbol-font bullet becomes empty, then merges
+    # with the blank lines around it below
+    md = re.sub(r"(?m)^[ \t]*(?:[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f][ \t]*)+$", "", md)
+    md = strip_control_chars(md)
     md = re.sub(r"\n{3,}", "\n\n", md)
     out_path = Path(out_dir) / (out_name or f"{Path(pdf_path).stem}.md")
     out_path.write_text(md, encoding="utf-8")

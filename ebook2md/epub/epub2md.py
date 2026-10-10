@@ -2,7 +2,7 @@ import os
 import re
 import sys
 import datetime
-from .. import front_matter
+from .. import front_matter, strip_control_chars
 from .extractor import EpubExtractor
 from .cleaner import EpubCleaner, _matches_title
 from .converter import EpubConverter
@@ -127,7 +127,7 @@ def generate_markdown_content(epub_path, stats=None):
         print(f"Note: {len(extractor.missing_files)} file(s) listed in the EPUB manifest are "
               f"missing from the archive (skipped), e.g. {extractor.missing_files[0]}")
 
-    return "".join(full_markdown_content), filename
+    return strip_control_chars("".join(full_markdown_content)), filename
 
 
 def process_epub(epub_path, output_dir, output_name=None):

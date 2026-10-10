@@ -278,6 +278,41 @@ def cmd_stale_review(args):
     print_stale_review(args.book_id, results_path)
 
 
+def cmd_concept_match(args):
+    import json
+    from pathlib import Path
+    from concept_match import match, queries_from_results, queries_from_book, print_matches
+
+    def _book_title(book_id):
+        # source_book links point at the book note's filename, which can
+        # differ from the manifest key (see apply_notes)
+        entry = load_manifest()["books"].get(book_id, {})
+        if entry.get("obsidian_card"):
+            return Path(entry["obsidian_card"]).stem
+        return entry.get("classification", {}).get("title") or book_id
+
+    if args.input:
+        book_id, queries = queries_from_results(Path(args.input))
+        book_id = args.book_id or book_id
+        book_title = _book_title(book_id)
+    elif args.book_id:
+        book_title = _book_title(args.book_id)
+        queries = queries_from_book(book_title)
+    else:
+        print("Error: --input or --book-id required", file=sys.stderr)
+        sys.exit(1)
+    if not queries:
+        print(f"\n沒有可比對的卡：{book_title}")
+        sys.exit(1)
+    rows = match(queries, book_title, top_n=args.top, min_score=args.min_score)
+    if args.output:
+        Path(args.output).write_text(json.dumps({"book_title": book_title, "rows": rows},
+                                                ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  [ok] {len(rows)} 張卡的比對結果寫入 {args.output}")
+    else:
+        print_matches(rows, book_title)
+
+
 def cmd_log(args):
     print_recent(n=args.n)
 
@@ -417,6 +452,14 @@ def main():
     p_stale_review.add_argument("--input", metavar="PATH",
                                 help="Notes results JSON（預設 pipeline/notes_results.json）")
 
+    # concept-match
+    p_cmatch = sub.add_parser("concept-match", help="跨書概念比對：列出其他書的相似概念卡（唯讀，不修改任何檔案）")
+    p_cmatch.add_argument("--input", metavar="PATH", help="notes_results JSON：比對這次要新開的卡")
+    p_cmatch.add_argument("--book-id", metavar="ID", help="只給這個：比對這本書已在 20_Concepts 的卡")
+    p_cmatch.add_argument("--top", type=int, default=5, help="每張卡列幾個候選（預設 5）")
+    p_cmatch.add_argument("--min-score", type=float, default=0.3, help="低於這個分數不列（預設 0.3）")
+    p_cmatch.add_argument("--output", metavar="PATH", help="寫成 JSON，不印出")
+
     # reclassify
     p_reclassify = sub.add_parser("reclassify", help="Move book to a different category (3-file sync)")
     p_reclassify.add_argument("--book-id", required=True, metavar="ID")
@@ -465,6 +508,7 @@ def main():
         "split-notes": cmd_split_notes,
         "merge-notes": cmd_merge_notes,
         "stale-review": cmd_stale_review,
+        "concept-match": cmd_concept_match,
         "reclassify": cmd_reclassify,
         "onepage-candidates": cmd_onepage_candidates,
         "notebook-stage": cmd_notebook_stage,

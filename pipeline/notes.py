@@ -17,6 +17,7 @@ from logger import get_logger
 from activity import record_book_action
 from manifest import load_manifest, update_book
 from ebook2md.slicing import slice_epub, slice_md, print_report
+from concept_match import card_sources
 
 log = get_logger("notes")
 
@@ -301,7 +302,6 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     # surface the list loudly, both on stdout and in the activity log, so the
     # gap is visible the moment it's created instead of months later.
     if entry.get("status") == "notes_generated":
-        source_pat = re.compile(r'source_book:\s*"\[\[(.*?)\]\]"')
         book_title_guess = classification.get("title") or book_id
         existing_for_book = []
         for p in concepts_dir.glob("*.md"):
@@ -309,8 +309,7 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
                 text = p.read_text(encoding="utf-8")
             except OSError:
                 continue
-            m = source_pat.search(text)
-            if m and m.group(1) == book_title_guess:
+            if book_title_guess in card_sources(text):
                 existing_for_book.append(p.stem)
         stale = sorted(set(existing_for_book) - new_card_titles)
         if stale:
@@ -338,21 +337,75 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     # original filename contained spaces that got normalised in the manifest key.
     book_title = card_path.stem if entry.get("obsidian_card") else book_id
     created = 0
+    shared = []
     for c in data.get("concept_cards", []):
         safe_title = _safe_title(c["title"])
         cc_path = concepts_dir / f"{safe_title}.md"
         if not cc_path.exists():
             cc_path.write_text(_render_concept_card(c, book_title, known_concepts), encoding="utf-8")
             created += 1
+        elif _add_source_to_card(cc_path, c, book_title, known_concepts):
+            shared.append(safe_title)
     if created:
         print(f"  [concepts]  {created} concept card(s) created")
+    if shared:
+        print(f"  [concepts]  {len(shared)} existing card(s) from other books gained this source: "
+              + "、".join(shared))
 
     # 3. Manifest update
     update_book(book_id, {"status": "notes_generated"})
     record_book_action("notes_applied", book_id, {
-        "chapters": len(chapters_data), "concepts": created,
+        "chapters": len(chapters_data), "concepts": created, "shared_concepts": shared,
     })
     print(f"  [ok] {book_id}: notes_generated")
+    return True
+
+
+def _add_source_to_card(path: Path, concept: dict, book_title: str,
+                        known_concepts: set[str] | None = None) -> bool:
+    """A card with this title already exists (usually from another book):
+    add this book to source_book, its quote under 原文 tagged with the book,
+    and any new related concepts. The definition stays as the first book
+    wrote it. Returns False when the card already lists this book."""
+    text = path.read_text(encoding="utf-8")
+    sources = card_sources(text)
+    if book_title in sources:
+        return False
+    sources.append(book_title)
+    block = "source_book:\n" + "".join(f'  - "[[{b}]]"\n' for b in sources)
+    text, n = re.subn(r'^source_book:\s*"\[\[.*?\]\]"[ \t]*\n', lambda m: block, text, count=1, flags=re.M)
+    if not n:
+        text, n = re.subn(r'^source_book:[ \t]*\n(?:[ \t]+-[ \t]*"\[\[.*?\]\]"[ \t]*\n)+', lambda m: block,
+                          text, count=1, flags=re.M)
+    if not n:  # no source_book at all: add it before the closing ---
+        text = re.sub(r"\A(---\n.*?\n)(---\n)", lambda m: m.group(1) + block + m.group(2),
+                      text, count=1, flags=re.S)
+
+    quote = concept.get("source_quote", "").strip()
+    if quote:
+        quote_block = "\n".join(f"> {line}" for line in quote.split("\n"))
+        addition = f"\n{quote_block}\n（[[{book_title}]]）\n"
+        text = re.sub(r"(## 原文\n.*?)(\n## )",
+                      lambda m: m.group(1).rstrip("\n") + "\n" + addition + m.group(2),
+                      text, count=1, flags=re.S)
+
+    existing_links = set(re.findall(r"\[\[(.*?)\]\]", text))
+    new_related = []
+    for r in concept.get("related_concepts", []):
+        safe = _safe_title(r)
+        if safe in existing_links or safe == path.stem:
+            continue
+        new_related.append(f"- [[{safe}]]" if known_concepts is None or safe in known_concepts else f"- {r}")
+    if new_related:
+        def _extend(m):
+            body = m.group(2).rstrip("\n")
+            if body.strip() == "*（無）*":
+                body = ""
+            body = (body + "\n" if body else "") + "\n".join(new_related)
+            return m.group(1) + body + "\n" + m.group(3)
+        text = re.sub(r"(## 相關概念\n)(.*?)(\n## )", _extend, text, count=1, flags=re.S)
+
+    path.write_text(text, encoding="utf-8")
     return True
 
 
@@ -382,7 +435,6 @@ def stale_review(book_id: str, results_path: Path = NOTES_RESULTS_FILE, top_n: i
     }
 
     concepts_dir = VAULT_ROOT / "20_Concepts"
-    source_pat = re.compile(r'source_book:\s*"\[\[(.*?)\]\]"')
     def_pat = re.compile(r'## 定義\s*\n(.*?)(?=\n##|\Z)', re.S)
     quote_pat = re.compile(r'## 原文\s*\n>\s*(.*?)(?=\n##|\Z)', re.S)
 
@@ -394,8 +446,7 @@ def stale_review(book_id: str, results_path: Path = NOTES_RESULTS_FILE, top_n: i
             text = p.read_text(encoding="utf-8")
         except OSError:
             continue
-        m = source_pat.search(text)
-        if not (m and m.group(1) == book_title_guess):
+        if book_title_guess not in card_sources(text):
             continue
 
         dm, qm = def_pat.search(text), quote_pat.search(text)

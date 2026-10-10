@@ -127,9 +127,15 @@ python pipeline/run_pipeline.py prepare-notes --book-id "書名"
 #   "請讀 pipeline/pending_notes.json，幫我生成書籍筆記，輸出到 pipeline/notes_results.json"
 #   格式：book_summary + 每章 {title, summary, key_quotes, key_concepts} + concept_cards
 
-# Step 3：套用到 Obsidian
+# Step 3：跨書比對（唯讀）：列出其他書的相似概念卡。同一個概念就把新卡改成既有卡名，
+#   apply-notes 會把本書加進那張卡的 source_book（變成清單）並附上本書引文，不另開新卡
+python pipeline/run_pipeline.py concept-match --input pipeline/notes_results.json
+
+# Step 4：套用到 Obsidian
 python pipeline/run_pipeline.py apply-notes
 ```
+
+舊書的卡也能比對：`concept-match --book-id "書名"`。分數是標題相似與內文相似（定義＋原文的字元二元組 TF-IDF）各半，只是候選，要讀兩張卡再決定。
 
 **notes_results.json 格式：**
 ```json

@@ -96,7 +96,7 @@ python -m ebook2md slice "output_folder/bookName.md"
 
 超過 40,000 字的章依序用 TOC 小節、標題、段落再拆，不丟字；注釋、書目、索引列在 `report.back_matter`，不放進章節。切完會把章節與書末附屬拼回原文比對，不一致就失敗、不寫檔。
 
-> v1.5 以前的入口 `python src/epub2md.py BOOK.epub [OUTPUT_DIR] [-o NAME.md]` 在 v1.6 還能用，會提示改用新指令，之後的版本會移除。網頁介面（Streamlit）在 v1.6 移除。
+> v1.5 以前的入口 `python src/epub2md.py` 在 v1.7 移除，改用 `python -m ebook2md convert`。網頁介面（Streamlit）在 v1.6 移除。
 
 ### 4. 執行測試
 
@@ -154,7 +154,6 @@ ebook2md/                  # repo 根目錄
 │   │   └── epub2md.py     # EPUB 轉檔流程
 │   └── pdf/
 │       └── pdf2md.py      # 有文字層的 PDF 轉 Markdown（PyMuPDF）
-├── src/epub2md.py         # v1.5 以前的入口（v1.6 保留，之後移除）
 ├── pipeline/              # 個人書庫的分類、讀書筆記流程（見 pipeline/README.md）
 ├── scripts/baseline.py    # 全書庫數字基準（本機）
 ├── tests/                 # 測試（合成資料）
