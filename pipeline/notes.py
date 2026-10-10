@@ -275,17 +275,32 @@ def _top_cuts(lines, points, lead_title, base_rank):
 
 def _merge_short(lines, segs):
     """Pieces under MIN_CHAPTER_CHARS (a part title page, a one-line intro)
-    are joined to the next piece, or the previous one if last."""
+    are joined to the next piece, or the previous one if last. A short
+    bibliography stays back matter, and a short body piece right before the
+    back matter goes to the previous chapter, not into the back matter. The
+    last piece of the book (a colophon after the bibliography) still goes
+    with whatever comes before it."""
     if len(segs) < 2:
         return segs
+    total = _chars(lines, 0, len(lines)) or 1
+
+    def back(seg):
+        return _is_back_matter(seg[0], _chars(lines, 0, seg[1]) / total)
+
     out = []
     pending = None
     for seg in segs:
         if pending is not None:
-            title = pending[0] if seg[0] and pending[0] and seg[0].startswith(pending[0] + "／") else (seg[0] or pending[0])
-            seg = [title, pending[1], seg[2]] + seg[3:]
+            if back(seg) and not back(pending):
+                if out:
+                    out[-1] = [out[-1][0], out[-1][1], pending[2]] + out[-1][3:]
+                else:
+                    out.append(pending)
+            else:
+                title = pending[0] if seg[0] and pending[0] and seg[0].startswith(pending[0] + "／") else (seg[0] or pending[0])
+                seg = [title, pending[1], seg[2]] + seg[3:]
             pending = None
-        if _chars(lines, seg[1], seg[2]) < MIN_CHAPTER_CHARS:
+        if _chars(lines, seg[1], seg[2]) < MIN_CHAPTER_CHARS and not back(seg):
             pending = seg
             continue
         out.append(seg)

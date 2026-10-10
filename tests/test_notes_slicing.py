@@ -186,6 +186,25 @@ class TestEpubSlicing(SliceTestBase):
         self.assertEqual(report["skipped_empty_documents"], 0)
         self.assertGreaterEqual(report["chapter_chars"], report["original_chars"])
 
+    def test_short_back_matter_is_not_joined_to_the_last_chapter(self):
+        files = [("c1.xhtml", "<h1>第一章</h1>" + paras(5000)), ("c2.xhtml", "<h1>第二章</h1>" + paras(5000)),
+                 ("r.xhtml", "<h1>參考書目</h1><p>某書。</p>")]
+        toc = [epub.Link("c1.xhtml", "第一章", "c1"), epub.Link("c2.xhtml", "第二章", "c2"),
+               epub.Link("r.xhtml", "參考書目", "r")]
+        chapters, report = self.slice(files, toc)
+        self.assertEqual([c["title"] for c in chapters], ["第一章", "第二章"])
+        self.assertNotIn("某書", chapters[-1]["content"])
+        self.assertEqual([b["title"] for b in report["back_matter"]], ["參考書目"])
+
+    def test_short_body_before_back_matter_stays_in_the_chapters(self):
+        files = [("c1.xhtml", "<h1>第一章</h1>" + paras(5000)), ("c2.xhtml", "<h1>第二章</h1>" + paras(5000)),
+                 ("p.xhtml", "<p>結語一句話。</p>"), ("r.xhtml", "<h1>參考書目</h1>" + paras(3000))]
+        toc = [epub.Link("c1.xhtml", "第一章", "c1"), epub.Link("c2.xhtml", "第二章", "c2"),
+               epub.Link("p.xhtml", "結語", "p"), epub.Link("r.xhtml", "參考書目", "r")]
+        chapters, report = self.slice(files, toc)
+        self.assertIn("結語一句話", chapters[-1]["content"])
+        self.assertEqual([b["title"] for b in report["back_matter"]], ["參考書目"])
+
     def test_lone_heading_before_a_long_section_is_not_a_chapter(self):
         body = ("<h1>第一章</h1>" + paras(6000) + "<h2>三、目的</h2><p>短句。</p><h2>四、方法</h2>" + paras(42000)
                 + "<h2>五、結論</h2>" + paras(6000))

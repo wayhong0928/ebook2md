@@ -1,6 +1,6 @@
 # ebook2md
 
-**專案版本： v1.3.0**
+**專案版本： v1.4.0**
 
 把 EPUB 與有文字層的 PDF 電子書轉成 Markdown 的純 Python 工具，不呼叫任何外部 AI API，靠程式邏輯把電子書轉成乾淨、結構化的 Markdown。EPUB 用 `src/epub2md.py`；PDF 用 `pipeline/pdf2md.py`，支援直排中文（見下方「PDF 書」）。網頁介面目前只支援 EPUB。
 
@@ -52,7 +52,7 @@ python pipeline/pdf2md.py "output_folder" "books/bookName.pdf"
 - 合併排版斷行、跨頁段落；頁面上下 8% 範圍內、在兩成以上頁面重複出現的頁首、頁尾、頁碼會刪掉。
 - 支援直排中文，包含每個字各自一行的直排 PDF。
 - 掃描檔與字型缺少 Unicode 對照的 PDF 由 `text_layer()` 判斷後跳過，不做 OCR。
-- 已知限制：頁碼、書眉不在上下邊界內時（常見於直排書與側邊書眉）會留在正文，並可能打斷跨頁段落；圖表、灰底框、側邊標籤的文字會混入正文；表格不還原。
+- 已知限制見下方「已知限制」。
 
 ---
 
@@ -100,7 +100,39 @@ python src/epub2md.py "books/bookName.epub" "output_folder" --output-name "bookN
 python -m pytest tests -q        # 或 python -m unittest discover -s tests
 ```
 
-版本庫裡的測試都用合成資料（程式現場產生的小型 EPUB／PDF 或 HTML 片段），不含任何真實書籍內容；拿真書做的測試只留在本機，已列入 `.gitignore`。`tests/test_pdf2md.py` 涵蓋段落合併、跨頁接段、頁首頁碼刪除、書籤標題、直排與掃描檔判斷。
+版本庫裡的測試都用合成資料（程式現場產生的小型 EPUB／PDF 或 HTML 片段），不含任何真實書籍內容；拿真書做的測試只留在本機，已列入 `.gitignore`。`tests/test_pdf2md.py` 涵蓋段落合併、跨頁接段、頁首頁碼刪除、書籤標題、直排與掃描檔判斷；`tests/test_slicing_invariants.py` 用隨機產生的書檢查章節切分：正文不遺失、章節順序不變、注釋與書目不進章節、只在段落之間切。
+
+### 5. 全書庫數字基準（本機）
+
+```bash
+python scripts/baseline.py measure run.json      # 轉換並切分書庫裡每一本書，記下數字
+python scripts/baseline.py check run.json        # 跟基準比較
+python scripts/baseline.py update run.json --reason "..."
+```
+
+每本書記正文字數、分節數、標題數、只有數字的行數（殘留頁碼）、刪掉的頁首頁尾數、跨頁接段數、切章數與切片自檢結果。書以雜湊代號記錄，不存書名；基準檔放在 `tests/local_baseline/`，不進版本庫。`check` 在正文字數比基準少、殘留頁碼比基準多、或切片自檢由通過變失敗時失敗；`update` 不會放寬這些下限與上限，除非用 `--allow` 指名那本書並寫明理由。
+
+---
+
+## ⚠️ 已知限制
+
+PDF 轉檔只求盡力：遇到轉壞而且要用的書，才針對那本修，修完把檢查條目加進本機的頁面事實測試，再跑全書庫基準確認其他書沒被影響。以下問題目前都只記錄、不修。
+
+**PDF**
+
+- 掃描檔與字型缺少 Unicode 對照的 PDF 不轉檔（不做 OCR）。
+- 以圖為主的書（食譜、圖解、教材）：圖說、側邊標籤、灰底框的文字可能混進正文，表格不還原、欄序可能錯。
+- 沒有書籤的 PDF：橫排書從字級猜標題，只有一層；直排書不猜標題。
+- 條列：偶爾在句中斷段；跨頁的清單項目會接成一行；英文步驟或清單裡，同一項換行後沒有接回。
+- 英文：行尾剛好斷在複合詞的連字號時，連字號會被吃掉（self-driving 變成 selfdriving）；段落剛好在頁尾句點結束時會被切成兩段。
+- 直排：條列只部分分行；跨頁的縮排新段偶爾沒斷開；目錄頁的斜體頁碼順序可能錯；OCR 文字層的英文單字之間沒有空白。
+- OCR 文字層：偶有書眉殘留；掉了句號時，相鄰的注釋會接成一段。
+
+**EPUB**
+
+- 約 0.4% 的 TOC 條目指向句子中間的頁碼錨點，這些地方刻意不插標題，md 會少掉這些小節標題（正文不缺）。
+- 正文裡的注釋編號直接接在句尾（例如「……的結果。12」），只影響閱讀。
+- 少數書每一行都是一個獨立段落，轉出來的段落會很碎。
 
 ---
 
@@ -116,6 +148,8 @@ ebook2md/
 │   └── web_ui.py       # Streamlit 網頁介面（僅 EPUB）
 ├── pipeline/           # 個人書庫的分類、讀書筆記流程（見 pipeline/README.md）
 │   └── pdf2md.py       # 有文字層的 PDF 轉 Markdown（PyMuPDF）
+├── scripts/
+│   └── baseline.py     # 全書庫數字基準（本機）
 ├── tests/              # 單元測試與測試樣本生成
 ├── output/             # 預設輸出目錄
 ├── docs/               # 系統設計文件
