@@ -3,9 +3,9 @@ from bs4 import BeautifulSoup
 import sys
 import os
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from converter import EpubConverter
+from ebook2md.epub.converter import EpubConverter
 
 class TestEpubConverter(unittest.TestCase):
     def setUp(self):

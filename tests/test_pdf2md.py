@@ -4,11 +4,11 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../pipeline")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import fitz  # noqa: E402
 
-import pdf2md  # noqa: E402
+from ebook2md.pdf import pdf2md  # noqa: E402
 
 FONT = "china-t"  # built-in Traditional Chinese font
 SIZE = 12

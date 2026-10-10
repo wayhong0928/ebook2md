@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../pipeline")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 CASES = Path(__file__).with_name("local_pdf_bench") / "cases.json"
 
@@ -99,7 +99,7 @@ _converted = {}
 
 def converted(name, pdf):
     if name not in _converted:
-        import pdf2md
+        from ebook2md.pdf import pdf2md
         out = Path(tempfile.mkdtemp(prefix="pdf_bench_"))
         path, _ = pdf2md.convert(pdf, out, out_name="book.md")
         _converted[name] = lines_of(path.read_text(encoding="utf-8"))

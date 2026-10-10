@@ -1,5 +1,5 @@
 """
-Wraps src/epub2md.py to batch-convert EPUBs to Markdown.
+Batch-converts library books to Markdown with the ebook2md package.
 Outputs to MARKDOWN_STAGING (待分類/) until classify assigns a category.
 Skips EPUBs that already have a corresponding MD file.
 """
@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from config import EPUB2MD_SCRIPT, MARKDOWN_STAGING
+from config import MARKDOWN_STAGING, REPO_ROOT
 from logger import get_logger
 from activity import record_book_action
 from manifest import load_manifest, update_book, scan, find_md_for_epub
@@ -25,9 +25,11 @@ def convert_one(epub_path: Path, force: bool = False) -> Path | None:
     MARKDOWN_STAGING.mkdir(parents=True, exist_ok=True)
     log.info("Converting: %s", epub_path.name)
 
+    # a separate process, so one broken EPUB cannot take the batch down
     result = subprocess.run(
-        [sys.executable, str(EPUB2MD_SCRIPT), str(epub_path), str(MARKDOWN_STAGING),
-         "--output-name", f"{stem}.md"],
+        [sys.executable, "-m", "ebook2md", "convert", str(epub_path), "-o", str(MARKDOWN_STAGING),
+         "--name", f"{stem}.md"],
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -51,7 +53,7 @@ def convert_one(epub_path: Path, force: bool = False) -> Path | None:
 def convert_one_pdf(pdf_path: Path, force: bool = False, author: str = "") -> Path | None:
     """PDF with a text layer -> md via pdf2md. Scans and PDFs whose fonts
     have no Unicode map are skipped (no OCR) and get no md."""
-    import pdf2md
+    from ebook2md.pdf import pdf2md
 
     stem = pdf_path.stem
     existing = find_md_for_epub(stem)

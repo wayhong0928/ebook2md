@@ -1,10 +1,10 @@
 # ebook2md
 
-**專案版本： v1.5.0**
+**專案版本： v1.6.0**
 
-把 EPUB 與有文字層的 PDF 電子書轉成 Markdown 的純 Python 工具，不呼叫任何外部 AI API，靠程式邏輯把電子書轉成乾淨、結構化的 Markdown。EPUB 用 `src/epub2md.py`；PDF 用 `pipeline/pdf2md.py`，支援直排中文（見下方「PDF 書」）。網頁介面目前只支援 EPUB。
+把 EPUB 與有文字層的 PDF 電子書轉成 Markdown 的純 Python 工具，不呼叫任何外部 AI API，靠程式邏輯把電子書轉成乾淨、結構化的 Markdown；也能把書切成章節（JSON），給摘要或筆記流程使用。PDF 支援直排中文（見下方「PDF 書」）。
 
-雖然這是一個純轉檔工具，但其輸出的格式經過特別優化，非常適合作為 **Google NotebookLM**、**ChatGPT** 或 **RAG (Retrieval-Augmented Generation)** 系統的高品質輸入素材。
+輸出的格式適合作為 **Google NotebookLM**、**ChatGPT** 或 **RAG (Retrieval-Augmented Generation)** 系統的輸入素材。md 的格式寫在 [`docs/output_format.md`](docs/output_format.md)。
 
 ---
 
@@ -23,11 +23,11 @@
     - 保留 Markdown 表格結構。
     - 保留程式碼區塊 (`pre/code`)。
     - 自動壓縮多餘的連續換行。
-    - 自動注入書籍 Metadata (書名、作者、轉換日期) 於檔案開頭。
+    - 檔案開頭記書名、作者、轉換日期，以及轉出這份 md 的轉換器版本。
 
-4. **雙重介面 (Dual Interface)**：
-    - 🖥️ **GUI (Web UI)**：基於 Streamlit 的圖形化介面，支援 **批次轉換 (Batch Processing)**、**自動 ZIP 打包下載**，以及 **自動重置上傳區 (Upload Reset)** 功能，優化大量轉檔流程。
-    - ⌨️ **CLI (Command Line)**：適合批次處理或整合至自動化流程。
+4. **可追溯 (Traceable)**：
+    - 相依套件版本釘死，同一份程式轉同一本書，除了轉換日期以外逐位元相同。
+    - 每份 md 記著是哪一版、哪個 commit 轉出來的，看到檔案就知道要不要重轉。
 
 ---
 
@@ -37,21 +37,16 @@
 - **EbookLib**: 處理 EPUB 容器與 Spine 解析。
 - **BeautifulSoup4**: HTML DOM 清洗與去噪。
 - **Markdownify**: HTML 轉 Markdown 核心。
-- **Streamlit**: 網頁介面框架。
-- **PyMuPDF**（僅 `pipeline/pdf2md.py` 使用）：PDF 文字與版面座標。注意 PyMuPDF 採 AGPL-3.0／商業雙授權，與本專案的 MIT 授權不同。
+- **PyMuPDF**（PDF 轉檔使用）：PDF 文字與版面座標。注意 PyMuPDF 採 AGPL-3.0／商業雙授權，與本專案的 MIT 授權不同。
 
 ---
 
-## 📄 PDF 書（`pipeline/pdf2md.py`）
-
-```bash
-python pipeline/pdf2md.py "output_folder" "books/bookName.pdf"
-```
+## 📄 PDF 書
 
 - 有書籤就照書籤分章；沒書籤的橫排書用字級判斷標題。
-- 合併排版斷行、跨頁段落；頁面上下 8% 範圍內、在兩成以上頁面重複出現的頁首、頁尾、頁碼會刪掉。
-- 支援直排中文，包含每個字各自一行的直排 PDF。
-- 掃描檔與字型缺少 Unicode 對照的 PDF 由 `text_layer()` 判斷後跳過，不做 OCR。
+- 合併排版斷行、跨頁段落；依版面位置與跨頁重複刪掉頁首、頁尾、頁碼（直排書的側邊書眉也算）。
+- 支援直排中文，包含每個字各自一行的直排 PDF；橫放的數字、英文、括號放回所在的欄。雙欄頁先讀左欄再讀右欄。
+- 掃描檔與字型缺少 Unicode 對照的 PDF 判斷後跳過，不做 OCR。
 - 已知限制見下方「已知限制」。
 
 ---
@@ -67,44 +62,51 @@ python -m venv venv
 # 啟動虛擬環境 (Windows)
 .\venv\Scripts\Activate
 
-# 安裝依賴
+# 安裝依賴（版本釘死）
 pip install -r requirements.txt
+
+# 選用：安裝成指令 ebook2md（不裝也能用 python -m ebook2md）
+pip install -e .
 ```
 
-`requirements.txt` 的版本都釘死，同一份程式才會轉出同一份 md；升級套件前先跑全書庫基準（見下方第 5 節）。每次 push，GitHub Actions 會在 Linux（Python 3.10、3.12）與 Windows（Python 3.11）跑一次版本庫裡的測試。
+`requirements.txt` 的版本都釘死，同一份程式才會轉出同一份 md；升級套件前先跑全書庫基準（見下方第 4 節）。每次 push，GitHub Actions 會在 Linux（Python 3.10、3.12）與 Windows（Python 3.11）跑一次版本庫裡的測試。
 
-### 2. 使用網頁介面 (推薦)
-
-啟動後會自動開啟瀏覽器，支援拖曳上傳與一鍵轉換。
+### 2. 轉檔
 
 ```bash
-streamlit run src/web_ui.py
-```
-
-### 3. 使用命令列 (CLI)
-
-適合進階使用者或批次轉換。
-
-```bash
-# 基本用法 (輸出到當前目錄)
-python src/epub2md.py "books/bookName.epub"
+# 依副檔名走 EPUB 或 PDF，可一次給多本（輸出到當前目錄）
+python -m ebook2md convert "books/bookName.epub" "books/other.pdf"
 
 # 指定輸出目錄
-python src/epub2md.py "books/bookName.epub" "output_folder"
+python -m ebook2md convert "books/bookName.epub" -o "output_folder"
 
-# 指定輸出檔名（預設是「書名_作者.md」）
-python src/epub2md.py "books/bookName.epub" "output_folder" --output-name "bookName.md"
+# 指定輸出檔名（只能給一本；預設 EPUB 是「書名_作者.md」、PDF 是「檔名.md」）
+python -m ebook2md convert "books/bookName.epub" -o "output_folder" --name "bookName.md"
 ```
+
+有書轉檔失敗或被跳過時（例如掃描檔），結束碼是 1，其他書照轉。
+
+### 3. 切章節
+
+```bash
+# EPUB 依 spine 與 TOC 切；md 依 --- 與標題切。輸出 JSON（預設寫在書旁邊，副檔名 .chapters.json）
+python -m ebook2md slice "books/bookName.epub" -o chapters.json
+python -m ebook2md slice "output_folder/bookName.md"
+```
+
+超過 40,000 字的章依序用 TOC 小節、標題、段落再拆，不丟字；注釋、書目、索引列在 `report.back_matter`，不放進章節。切完會把章節與書末附屬拼回原文比對，不一致就失敗、不寫檔。
+
+> v1.5 以前的入口 `python src/epub2md.py BOOK.epub [OUTPUT_DIR] [-o NAME.md]` 在 v1.6 還能用，會提示改用新指令，之後的版本會移除。網頁介面（Streamlit）在 v1.6 移除。
 
 ### 4. 執行測試
 
 ```bash
-python -m pytest tests -q        # 或 python -m unittest discover -s tests
+python -m pytest tests -q
 ```
 
-版本庫裡的測試都用合成資料（程式現場產生的小型 EPUB／PDF 或 HTML 片段），不含任何真實書籍內容；拿真書做的測試只留在本機，已列入 `.gitignore`。`tests/test_pdf2md.py` 涵蓋段落合併、跨頁接段、頁首頁碼刪除、書籤標題、直排與掃描檔判斷；`tests/test_slicing_invariants.py` 用隨機產生的書檢查章節切分：正文不遺失、章節順序不變、注釋與書目不進章節、只在段落之間切。
+版本庫裡的測試都用合成資料（程式現場產生的小型 EPUB／PDF 或 HTML 片段），不含任何真實書籍內容；拿真書做的測試只留在本機，已列入 `.gitignore`。`tests/test_pdf2md.py` 涵蓋段落合併、跨頁接段、頁首頁碼刪除、書籤標題、直排與掃描檔判斷；`tests/test_slicing_invariants.py` 用隨機產生的書檢查章節切分：正文不遺失、章節順序不變、注釋與書目不進章節、只在段落之間切；`tests/test_cli.py` 檢查命令列、版本行，以及同一本書轉兩次逐位元相同。
 
-### 5. 全書庫數字基準（本機）
+全書庫數字基準（本機，需要 `pipeline/` 的書庫設定）：
 
 ```bash
 python scripts/baseline.py measure run.json      # 轉換並切分書庫裡每一本書，記下數字
@@ -141,21 +143,24 @@ PDF 轉檔只求盡力：遇到轉壞而且要用的書，才針對那本修，�
 ## 📁 專案結構
 
 ```text
-ebook2md/
-├── src/
-│   ├── cleaner.py      # HTML 清洗與去噪邏輯
-│   ├── converter.py    # Markdown 轉換與格式微調
-│   ├── epub2md.py      # EPUB 轉檔的 CLI 入口與流程控制
-│   ├── extractor.py    # EPUB 檔案讀取與 Metadata 提取
-│   └── web_ui.py       # Streamlit 網頁介面（僅 EPUB）
-├── pipeline/           # 個人書庫的分類、讀書筆記流程（見 pipeline/README.md）
-│   └── pdf2md.py       # 有文字層的 PDF 轉 Markdown（PyMuPDF）
-├── scripts/
-│   └── baseline.py     # 全書庫數字基準（本機）
-├── tests/              # 單元測試與測試樣本生成
-├── output/             # 預設輸出目錄
-├── docs/               # 系統設計文件
-└── requirements.txt    # 專案依賴清單
+ebook2md/                  # repo 根目錄
+├── ebook2md/              # 套件
+│   ├── cli.py             # 命令列：convert、slice
+│   ├── slicing.py         # 章節切分
+│   ├── epub/
+│   │   ├── extractor.py   # EPUB 讀取、Spine 與 TOC
+│   │   ├── cleaner.py     # HTML 清洗與去噪、TOC 標題補償
+│   │   ├── converter.py   # HTML 轉 Markdown 與格式微調
+│   │   └── epub2md.py     # EPUB 轉檔流程
+│   └── pdf/
+│       └── pdf2md.py      # 有文字層的 PDF 轉 Markdown（PyMuPDF）
+├── src/epub2md.py         # v1.5 以前的入口（v1.6 保留，之後移除）
+├── pipeline/              # 個人書庫的分類、讀書筆記流程（見 pipeline/README.md）
+├── scripts/baseline.py    # 全書庫數字基準（本機）
+├── tests/                 # 測試（合成資料）
+├── docs/                  # 輸出格式與系統設計文件
+├── pyproject.toml
+└── requirements.txt       # 釘死版本的相依套件
 ```
 
 ---
@@ -164,7 +169,7 @@ ebook2md/
 
 1. **Standard Ebooks**：
     - **特色**：極高品質的標準化 HTML/CSS 結構，重新排版過。
-    - **用圖**：測試語意結構轉換 (H1/H2 階層) 與 Metadata 提取的精準度。
+    - **用途**：測試語意結構轉換 (H1/H2 階層) 與 Metadata 提取的精準度。
     - **下載**：[Alice's Adventures in Wonderland](https://standardebooks.org/ebooks/lewis-carroll/alices-adventures-in-wonderland)
 
 2. **Project Gutenberg**：

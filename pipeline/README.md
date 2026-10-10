@@ -8,13 +8,13 @@
 
 ```
 pipeline/
-├── config.py               # 所有路徑常數（單一真實來源）
+├── config.py               # 所有路徑常數；書庫與 vault 的位置讀 local_config.json
+├── local_config.json       # 本機的書庫與 vault 位置（不進版本庫）
 ├── manifest.py             # 書庫掃描與狀態追蹤
-├── convert.py              # EPUB／PDF → Markdown 批次包裝器
-├── pdf2md.py               # 有文字層的 PDF → Markdown（PyMuPDF）
+├── convert.py              # EPUB／PDF → Markdown 批次包裝器（呼叫 ebook2md 套件）
 ├── classify.py             # 分類批次匯出 / 套用結果
 ├── create_book_card.py     # 在 Obsidian 建立書籍筆記 stub
-├── notes.py                # Phase 2：EPUB 解析 + 筆記生成
+├── notes.py                # Phase 2：準備章節（切片在 ebook2md/slicing.py）+ 套用筆記
 ├── verify_notes.py         # Phase 2 筆記的自動檢查（斷連結、截斷、引文等於標題）
 ├── onepage_candidates.py   # 一頁版的佳句候選池
 ├── sync.py                 # 三檔同步移動（EPUB + MD + 筆記）
@@ -34,7 +34,7 @@ pipeline/
 ### Obsidian Vault 結構
 
 ```
-D:\github-repo\Obsidian Vault\Ebook\
+<vault_root>\   （位置設在 pipeline/local_config.json，見下方）
 ├── CLAUDE.md               # 系統路徑速查與 CLI 指令手冊
 ├── 00_Inbox\               # 低信心度分類暫存，人工確認後移走
 ├── 10_Books\               # 書籍筆記（依 15 個分類 + 系列子資料夾）
@@ -95,7 +95,7 @@ done             → 閱讀完畢
 
 ## 標準工作流程
 
-> 工作目錄：`D:\github-repo\ebook2md`
+> 工作目錄：repo 根目錄
 
 ### 每次 Session 開始
 
@@ -179,31 +179,26 @@ python pipeline/run_pipeline.py history --book-id "書名"
 | 信心度 < 0.7 | 筆記輸出至 `00_Inbox/`，人工確認後用 `inbox-move` 移走 |
 | 跨領域書籍 | 主分類 + `sub_categories` 補充次要領域 |
 | 全新領域 | `category: 尚未歸檔`，`new_category_suggestion` 提供建議 |
-| 系列/作者子資料夾 | 同系列或同作者在整個書庫 ≥ 6 本時，自動建子資料夾 |
+| 系列/作者子資料夾 | 同系列或同作者在整個書庫 ≥ 5 本時，自動建子資料夾 |
 
 ---
 
 ## EPUB 章節解析策略
 
-Phase 2 優先從 EPUB 直接解析（`notes.py`，透過 `src/extractor.py` 讀檔），而非轉換後的 MD：
+Phase 2 優先從 EPUB 直接解析（`ebook2md/slicing.py`，用轉檔器同一個 EPUB 讀取器），而非轉換後的 MD：
+
+- **不變式**：切片（正文不遺失、順序不變、注釋與書目不進章節、只在段落之間切）由 `tests/test_slicing_invariants.py` 檢查
 
 - **Spine 讀取順序**：依 EPUB `spine` 確保章節正確排列
 - **TOC 標題對應**：一個檔含多章時依 TOC 錨點切開；章名頁的標題會傳給下一個內文檔，沒有標題的檔併進上一章
 - **不截斷**：超過 40,000 字的章依序用 TOC 小節、標題、段落再拆，不丟字；切完會把全書拼回去比對原文，不一致就不寫檔
 - **書末附屬**：注釋、書目、索引另列 `back_matter`，不寫摘要
-- **過濾規則**：不足 200 字的檔跳過（版權頁、目次等）
+- **短檔**：只略過空白檔；不到 200 字的片段併進相鄰的章，但很短的書目仍列書末附屬，書目前的短正文併回前一章
 - **fallback**：EPUB 解析章數 < 2 章時（含只有 PDF 的書），改用 MD 以 `---` 分隔切片
 
 ## PDF 書
 
-`convert.py` 用 `pdf2md.py` 轉有文字層的 PDF（2026-10 起取代 MarkItDown）：
-
-- **章節**：有書籤就照書籤插標題，最上層前加 `---` 讓切片照章切；沒有書籤的橫排書用字級判斷標題
-- **段落**：寫到右邊界的行接到下一行（中文不加空格、英文處理連字號），跨頁的段落也接起來
-- **直排**：依欄由右到左、欄內由上到下重排，包含「一個字一行」的直排 PDF
-- **頁首頁尾**：頁面上下 8% 範圍內、在兩成以上頁面重複出現的行（數字正規化後比對）刪掉；不在這個範圍內的頁碼、書眉（直排書常見）目前刪不掉
-- **不轉的 PDF**：`text_layer()` 判斷為掃描檔（幾乎沒有文字）或字型缺少 Unicode 對照（抽出來是亂碼）時跳過，不做 OCR
-- **已知限制**：圖表、灰底框、側邊標籤的文字會按版面順序混進正文；直排書夾的橫排英文可能斷句或變亂碼；表格不還原成 Markdown 表格
+`convert.py` 用 `ebook2md/pdf/pdf2md.py` 轉有文字層的 PDF（2026-10 起取代 MarkItDown）。做法與已知限制見根目錄 `README.md` 的「PDF 書」與「已知限制」；掃描檔與字型缺少 Unicode 對照的 PDF 不轉，不做 OCR。
 
 ---
 
@@ -218,7 +213,16 @@ Phase 2 優先從 EPUB 直接解析（`notes.py`，透過 `src/extractor.py` 讀
 ## 環境安裝
 
 ```bash
-pip install -r pipeline/requirements.txt
-# 需要：tqdm、EbookLib、BeautifulSoup4、markdownify、PyMuPDF
-# anthropic 套件備用（目前 Claude Code 在對話中完成，不需 API key）
+pip install -r pipeline/requirements.txt   # 同根目錄的 requirements.txt
 ```
+
+### 本機設定（書庫與 vault 的位置）
+
+位置不寫在程式裡。擇一設定：
+
+```json
+// pipeline/local_config.json（已列入 .gitignore）
+{"ebooks_root": "D:/Books/Ebooks", "vault_root": "D:/Notes/Ebook"}
+```
+
+或設環境變數 `EBOOK2MD_EBOOKS_ROOT`、`EBOOK2MD_VAULT_ROOT`（優先於設定檔）。兩者都沒有時，用 repo 裡的 `books/`、`vault/`。

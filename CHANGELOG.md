@@ -2,6 +2,23 @@
 
 v1.3.0 之前沒有打 tag。舊版本是事後依 commit 歷史整理的，v1.2 這條分界也是事後才訂。
 
+## v1.6.0（2026-10-10）
+
+這一版改架構，有不相容的變動。轉出來的 md 除了開頭多一行轉換器版本以外，跟 v1.5.0 逐字相同。
+
+### 不相容的變動
+
+- 程式改成 `ebook2md/` 套件：`epub/`（extractor、cleaner、converter、epub2md）、`pdf/pdf2md.py`（整檔搬入）、`slicing.py`（從 `pipeline/notes.py` 抽出章節切分）。`src/` 下的模組與 `pipeline/pdf2md.py` 移除。
+- 單一命令列：`python -m ebook2md convert BOOK...`（依副檔名走 EPUB 或 PDF，`-o` 輸出目錄、`--name` 檔名）、`python -m ebook2md slice BOOK`（輸出章節 JSON）。加了 `pyproject.toml`，`pip install -e .` 後可直接打 `ebook2md`。舊入口 `src/epub2md.py` 保留這一版，執行時提示改用新指令。
+- md 開頭多一行 `# 轉換器：ebook2md 1.6.0 (commit)`，記下轉出這份 md 的版本；套件有未 commit 的修改時加 `+dirty`。v1.6 以前的 md 沒有這一行，切片兩種都接受。
+- 移除網頁介面（`src/web_ui.py`，Streamlit），requirements 也拿掉 streamlit。
+- pipeline 的書庫與 vault 位置不再寫在 `config.py`，改讀環境變數 `EBOOK2MD_EBOOKS_ROOT`、`EBOOK2MD_VAULT_ROOT` 或本機的 `pipeline/local_config.json`（不進版本庫）。
+
+### 新增
+
+- `docs/output_format.md`：md 開頭、`---`、標題、圖片標記與章節 JSON 的規格。
+- 測試：命令列、版本行、同一本書轉兩次逐位元相同、舊入口仍可用、版本庫的檔案不含個人路徑。
+
 ## v1.5.0（2026-10-10）
 
 這一版整理工程面，轉出來的 md 跟 v1.4.0 逐字相同。

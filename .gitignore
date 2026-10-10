@@ -20,6 +20,8 @@ pipeline/pending_classify.json
 pipeline/pending_notes*.json
 pipeline/notes_results*.json
 pipeline/備份/
+pipeline/local_config.json
+pipeline/logs/
 
 # Python Standard
 __pycache__/

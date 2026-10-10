@@ -1,12 +1,33 @@
+import json
+import os
+import sys
 from pathlib import Path
 
-# === Root paths ===
-EBOOKS_ROOT = Path(r"D:\wayhong-data\Ebooks")
-MARKDOWN_ROOT = EBOOKS_ROOT / "markdown"
-VAULT_ROOT = Path(r"D:\github-repo\Obsidian Vault\Ebook")
 PIPELINE_DIR = Path(__file__).parent
-EPUB2MD_SCRIPT = PIPELINE_DIR.parent / "src" / "epub2md.py"
+REPO_ROOT = PIPELINE_DIR.parent
+# the converter and the slicer live in the ebook2md package at the repo root
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 MANIFEST_PATH = PIPELINE_DIR / "manifest.json"
+
+# === Root paths ===
+# Where the library and the Obsidian vault are is personal, so it is not in
+# this file: set EBOOK2MD_EBOOKS_ROOT / EBOOK2MD_VAULT_ROOT, or write
+# pipeline/local_config.json (gitignored):
+#   {"ebooks_root": "D:/Books/Ebooks", "vault_root": "D:/Notes/Ebook"}
+# Without either, folders inside the repo are used (books/, vault/).
+_LOCAL_CONFIG = PIPELINE_DIR / "local_config.json"
+_local = json.loads(_LOCAL_CONFIG.read_text(encoding="utf-8")) if _LOCAL_CONFIG.exists() else {}
+
+
+def _root(name: str, default: Path) -> Path:
+    value = os.environ.get(f"EBOOK2MD_{name.upper()}") or _local.get(name)
+    return Path(value) if value else default
+
+
+EBOOKS_ROOT = _root("ebooks_root", REPO_ROOT / "books")
+MARKDOWN_ROOT = EBOOKS_ROOT / "markdown"
+VAULT_ROOT = _root("vault_root", REPO_ROOT / "vault")
 
 # === Vault subfolder paths ===
 VAULT_INBOX = VAULT_ROOT / "00_Inbox"

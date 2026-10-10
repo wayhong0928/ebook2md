@@ -1,4 +1,4 @@
-"""PDF with a text layer -> Markdown (used by convert.py; MarkItDown before 2026-10-05)
+"""PDF with a text layer -> Markdown (MarkItDown before 2026-10-05)
 
 - chapter headings from PDF bookmarks (get_toc), '---' before top-level ones
 - without bookmarks: headings guessed from font size
@@ -16,11 +16,12 @@ import collections
 import datetime
 import re
 import statistics
-import sys
 import unicodedata
 from pathlib import Path
 
 import fitz
+
+from .. import front_matter
 
 MARGIN = 0.08  # top/bottom share of the page always treated as header/footer zone
 
@@ -436,7 +437,7 @@ def convert(pdf_path, out_dir, author="", out_name=None):
             return True
         return len(pk) >= 2 and (k.startswith(pk) or pk.startswith(k)) and len(pk) <= len(k) * 1.5
 
-    out = [f"# 書名：{Path(pdf_path).stem}\n\n# 作者：{author}\n\n# 轉換日期：{datetime.date.today().isoformat()}\n\n---\n"]
+    out = [front_matter(Path(pdf_path).stem, author, datetime.date.today().isoformat())]
     open_idx = None  # index in out of a paragraph that runs on to the next page
     heads_guessed = 0
     for i, (paras, vertical, h) in enumerate(pages):
@@ -505,11 +506,3 @@ def convert(pdf_path, out_dir, author="", out_name=None):
     stats.update(pages=n, toc_entries=len(toc), headings_guessed=heads_guessed, chars=len(md))
     return out_path, stats
 
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    out_dir = Path(sys.argv[1])
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for p in sys.argv[2:]:
-        path, st = convert(p, out_dir)
-        print(path.name, dict(st))

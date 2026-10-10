@@ -8,11 +8,11 @@ from pathlib import Path
 
 from ebooklib import epub
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../pipeline")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import notes  # noqa: E402
+from ebook2md import slicing  # noqa: E402
 
-LIMIT = notes.MAX_CHARS_PER_CHAPTER
+LIMIT = slicing.MAX_CHARS_PER_CHAPTER
 
 
 def para(n_chars, word="測試句子內容。"):
@@ -53,7 +53,7 @@ class SliceTestBase(unittest.TestCase):
 
     def slice(self, files, toc):
         path = build_epub(Path(self.tmp.name) / "book.epub", files, toc)
-        chapters, report = notes._slice_from_epub(path)
+        chapters, report = slicing.slice_epub(path)
         self.assertTrue(report["self_check"])
         for c in chapters:
             self.assertEqual(len(c["content"]), c["char_count"])
@@ -209,7 +209,7 @@ class TestEpubSlicing(SliceTestBase):
         body = ("<h1>第一章</h1>" + paras(6000) + "<h2>三、目的</h2><p>短句。</p><h2>四、方法</h2>" + paras(42000)
                 + "<h2>五、結論</h2>" + paras(6000))
         chapters, _ = self.slice([("c1.xhtml", body)], [epub.Link("c1.xhtml", "第一章", "c1")])
-        self.assertTrue(all(c["char_count"] >= notes.MIN_CHAPTER_CHARS for c in chapters),
+        self.assertTrue(all(c["char_count"] >= slicing.MIN_CHAPTER_CHARS for c in chapters),
                         [(c["title"], c["char_count"]) for c in chapters])
 
 
@@ -217,10 +217,10 @@ class TestBackMatterTitles(unittest.TestCase):
     def test_titles(self):
         for t in ["參考書目", "主要參考文獻", "參考書目及注釋", "附錄2：網路資源與延伸閱讀", "徵引書目",
                   "主要參考材料", "人名索引", "附注", "Notes", "Bibliography"]:
-            self.assertTrue(notes._is_back_matter(t, 0.9), t)
+            self.assertTrue(slicing._is_back_matter(t, 0.9), t)
         for t in ["參考文獻的寫法", "∣延伸閱讀∣ 某人的自傳性資料", "注意力經濟", "研究方法", "Notes on Design"]:
-            self.assertFalse(notes._is_back_matter(t, 0.9), t)
-        self.assertFalse(notes._is_back_matter("注釋", 0.2))
+            self.assertFalse(slicing._is_back_matter(t, 0.9), t)
+        self.assertFalse(slicing._is_back_matter("注釋", 0.2))
 
 
 class TestMdSlicing(unittest.TestCase):
@@ -228,13 +228,13 @@ class TestMdSlicing(unittest.TestCase):
         body = "內容句子。" * 100
         md = (f"# 書名：X\n\n# 作者：Y\n\n---\n\n# 作者序\n\n{body}\n\n---\n\n"
               f"# 書名頁之後\n\n{body}\n\n---\n\n")
-        chapters, _ = notes._slice_from_md(md)
+        chapters, _ = slicing.slice_md(md)
         self.assertEqual([c["title"] for c in chapters], ["作者序", "書名頁之後"])
 
     def test_long_md_section_splits_at_headings_and_rejoins(self):
         sec = "# 第一章\n\n" + "\n\n".join(f"## 第{i}節\n\n" + "內容句子。" * 3000 for i in range(1, 4))
         md = "# 書名：X\n\n---\n\n" + sec + "\n\n---\n\n"
-        chapters, report = notes._slice_from_md(md)
+        chapters, report = slicing.slice_md(md)
         self.assertTrue(report["self_check"])
         self.assertEqual([c["title"] for c in chapters], ["第一章", "第一章／第2節", "第一章／第3節"])
         self.assertEqual("\n".join(c["content"] for c in chapters), sec)

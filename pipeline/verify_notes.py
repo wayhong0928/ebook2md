@@ -29,7 +29,7 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:
             pass
 
-VAULT_ROOT = Path(r"D:\github-repo\Obsidian Vault\Ebook")
+from config import VAULT_ROOT  # noqa: E402
 BOOKS_DIR = VAULT_ROOT / "10_Books"
 CONCEPTS_DIR = VAULT_ROOT / "20_Concepts"
 MOC_DIR = VAULT_ROOT / "30_MOC"

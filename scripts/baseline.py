@@ -37,16 +37,16 @@ GUARDS = {"body_chars": "min", "number_lines": "max"}
 
 
 def _paths():
-    for p in (ROOT / "pipeline", ROOT / "src"):
-        if str(p) not in sys.path:
-            sys.path.insert(0, str(p))
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
 
 
 def key_of(book_id):
     return hashlib.sha256(book_id.encode("utf-8")).hexdigest()[:12]
 
 
-HEADER = re.compile(r"^# (轉換日期|轉換器)：.*$", re.M)
+# date and converter lines (with the blank line after them) differ between runs and versions
+HEADER = re.compile(r"^# (轉換日期|轉換器)：.*\n(\n)?", re.M)
 
 
 def md_numbers(md):
@@ -85,15 +85,15 @@ def measure_one(job):
     try:
         with contextlib.redirect_stdout(sink):
             if kind == "epub":
-                import epub2md
-                import notes
+                from ebook2md import slicing
+                from ebook2md.epub import epub2md
                 stats = {}
                 md, _ = epub2md.generate_markdown_content(src, stats)
                 out.update({f"conv_{k}": v for k, v in stats.items()})
-                chapters, report = notes._slice_from_epub(Path(src))
+                chapters, report = slicing.slice_epub(Path(src))
             else:
-                import pdf2md
-                import notes
+                from ebook2md import slicing
+                from ebook2md.pdf import pdf2md
                 ok, why = pdf2md.text_layer(src)
                 if not ok:
                     return key, {"kind": kind, "skipped": why}, None
@@ -101,7 +101,7 @@ def measure_one(job):
                     path, stats = pdf2md.convert(src, tmp, out_name="x.md")
                     md = path.read_text(encoding="utf-8")
                 out.update({f"conv_{k}": v for k, v in stats.items() if k != "chars"})
-                chapters, report = notes._slice_from_md(md)
+                chapters, report = slicing.slice_md(md)
         out.update(md_numbers(md))
         out.update(slice_numbers(chapters, report))
         if md_dir:

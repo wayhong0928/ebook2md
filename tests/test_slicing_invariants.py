@@ -19,11 +19,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../pipeline")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import notes  # noqa: E402
+from ebook2md import slicing  # noqa: E402
 
-LIMIT = notes.MAX_CHARS_PER_CHAPTER
+LIMIT = slicing.MAX_CHARS_PER_CHAPTER
 NOTE_WORD = "注文"
 BACK_WORD = "書末附錄文字"
 
@@ -164,7 +164,7 @@ class TestSlicingInvariants(unittest.TestCase):
                     book = Book(seed).build()
                     path = Path(tmp) / f"b{seed}.epub"
                     book.write(path)
-                    chapters, report = notes._slice_from_epub(path)
+                    chapters, report = slicing.slice_epub(path)
                     self.assertTrue(chapters)
                     self.check(book, chapters, report)
                     if any(NOTE_WORD in l for l in book.source_lines()):
@@ -184,7 +184,7 @@ class TestSlicingInvariants(unittest.TestCase):
                             body.append(f"## 小節{n}")
                     sections.append("\n\n".join(body))
                 md = "# 書名：X\n\n# 作者：Y\n\n# 轉換日期：2026-01-01\n\n---\n\n" + "\n\n---\n\n".join(sections) + "\n"
-                chapters, report = notes._slice_from_md(md)
+                chapters, report = slicing.slice_md(md)
                 self.assertTrue(report["self_check"])
                 joined = "\n".join(c["content"] for c in chapters)
                 self.assertEqual([l for l in joined.split("\n") if l],

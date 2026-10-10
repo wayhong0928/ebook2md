@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ebook2md"
+dynamic = ["version"]
+description = "EPUB and text-layer PDF books to Markdown, and books to chapters"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# exact versions are pinned in requirements.txt (same code, same md)
+dependencies = ["EbookLib", "beautifulsoup4", "markdownify", "PyMuPDF"]
+
+[project.scripts]
+ebook2md = "ebook2md.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "ebook2md.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["ebook2md*"]

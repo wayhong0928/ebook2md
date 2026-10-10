@@ -1,6 +1,6 @@
 # 技術堆疊與依賴套件說明 (Technical Stack & Dependencies)
 
-> 本文件描述 v1.3.0 的 EPUB 轉檔（`src/`）。PDF 轉檔（`pipeline/pdf2md.py`）與章節切分（`pipeline/notes.py`）不在本文件範圍；之後的變動見 `CHANGELOG.md`。
+> 本文件描述 v1.3.0 的 EPUB 轉檔。v1.6 起這些模組搬到 `ebook2md/epub/`（類別與函式不變），命令列改用 `python -m ebook2md convert`，網頁介面（Streamlit）已移除。輸出格式以 `docs/output_format.md` 為準；PDF 轉檔與章節切分見 `README.md`，之後的變動見 `CHANGELOG.md`。
 
 本文檔詳細列出 `Epub2NotebookLM-Converter` 專案所使用的關鍵技術與第三方套件，以及選擇它們的原因。
 
