@@ -16,7 +16,9 @@ v1.3.0 之前沒有打 tag。舊版本是事後依 commit 歷史整理的，v1.2
 ### pipeline
 
 - `concept-match`：跨書概念比對，列出其他書的相似概念卡（唯讀）。
-- `apply-notes` 遇到別本書已有的同名概念卡，會把本書加進 `source_book`（改成 YAML 清單），附上本書引文與新的相關概念，定義不動；以前是直接略過。
+- `apply-notes` 遇到別本書已有的同名概念卡，會把本書加進 `source_book`（改成 YAML 清單），附上本書引文與新的相關概念，定義不動；以前是直接略過。`apply-notes` 會列出這次追加了來源的卡，activity log 的 `notes_applied` 多一個 `shared_concepts` 欄位。
+- 重跑時的孤兒卡警告與 `stale-review` 改成也認得清單式的 `source_book`；以前只認單一值，卡片改成清單後會誤判。
+- 修正：`apply-notes` 處理只有 PDF 的書（manifest 沒有 EPUB 路徑）時會當掉。沒有分類書名時，書名改從 EPUB、md、PDF 路徑依序取；有 PDF 路徑時另寫 `source_pdf`，跟書籍筆記 stub 的欄位一致。只有 EPUB 的書輸出不變，同時有 EPUB 與 PDF 的書會多出 `source_pdf` 這一欄。
 
 ## v1.6.0（2026-10-10）
 
