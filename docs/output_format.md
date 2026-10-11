@@ -65,7 +65,7 @@
 ```
 
 - `chapters[].content` 是原文的行（EPUB 是 HTML 文字依標籤切開的行，md 是原本的行），依原順序排列，只在行與行之間切，不改字。章末注釋被移出時，同一章的前後兩段正文會直接接在一起。`char_count` 等於 `content` 的長度。
-- 超過 40,000 字的章再拆，`split` 記拆法：`toc_sub`（TOC 小節）、`heading`（標題）、`paragraph`（段落，標題加「（k/n）」）。單一段落就超過上限時不拆，列在 `report.still_oversize`。
+- 超過 40,000 字的章再拆，`split` 記拆法：`toc_sub`（TOC 小節）、`heading`（標題）、`paragraph`（段落，標題加「（k/n）」）。編號段的第一行像小標時（短、不以句讀標點結尾、前一行是句尾），標題再加「／小標」，例如「第二章（2/3）／練習的原則」。單一段落就超過上限時不拆，列在 `report.still_oversize`。
 - 書末附屬（注釋、書目、索引等，標題整個由這類詞組成、而且在全書後半）與章末注釋不放進 `chapters`，只把標題與字數列在 `report.back_matter`；章末注釋的 `kind` 是 `chapter_notes`。
 - 不到 200 字的片段併進相鄰的章；但很短的書目仍列書末附屬，書目前的短正文併回前一章。
 - `report.self_check` 為 `false` 時（章節與書末附屬拼不回原文），命令列回報失敗、不寫檔。

@@ -367,6 +367,31 @@ def _refine(lines, points, title, a, b, limit, how=None):
             for k, (x, y) in enumerate(parts, 1)]
 
 
+_SUBTITLE_MAX = 25
+_NOT_SUBTITLE = re.compile(r"^([-*+>|!#「『“\"\[［]|(圖|表|Figure|Table|Fig\.)\s*[\d０-９]"
+                           r"|(書名|作者|譯者|出版社?|ISBN)\s*[:：])", re.I)
+_SUBTITLE_BAD_END = "。！？!?.…；;，、,：:"  # a closing bracket may end a heading: '第二組練習（進階）'
+
+
+def _lead_subtitle(lines, a, b):
+    """The first line of a numbered piece of a split chapter when it reads like a
+    subheading the converter did not mark ('練習的原則'): short, not ending a
+    sentence or a clause, and starting a paragraph (the line before it ends a
+    sentence). None otherwise; the piece keeps its numbered title only."""
+    i = next((j for j in range(a, b) if lines[j].strip()), None)
+    if i is None or i + 1 >= b:
+        return None
+    prev = next((lines[j] for j in range(i - 1, -1, -1) if lines[j].strip()), None)
+    if prev is not None and not _ends_sentence(prev):
+        return None  # cut inside a paragraph
+    s = re.sub(r"\*\*|__", "", lines[i]).strip()
+    if not 2 <= len(s) <= _SUBTITLE_MAX or _NOT_SUBTITLE.match(s):
+        return None
+    if s[-1] in _SUBTITLE_BAD_END or not re.search(r"[^\W\d_]", s):
+        return None
+    return s
+
+
 def _cut_out_notes(lines, segs, notes, total, limit):
     """Take trailing-note ranges out of the chapters: [(title, ranges, is_notes)].
     A chapter spread over several files, each ending in notes, keeps its body
@@ -506,11 +531,15 @@ def _assemble(docs, limit=MAX_CHARS_PER_CHAPTER, source="epub"):
         if len(refined) > 1:
             report["oversize_chapters"] += 1
             same = [r[0] for r in refined]
-            if len(set(same)) < len(same):  # cut at untitled file starts
-                for k, r in enumerate(refined):
-                    if same.count(r[0]) > 1 and r[0]:
-                        nth = same[:k + 1].count(r[0])
-                        r[0] = f"{r[0]}（{nth}/{same.count(r[0])}）"
+            for k, r in enumerate(refined):
+                numbered = r[2] == "paragraph"
+                if same.count(r[0]) > 1 and r[0]:  # cut at untitled file starts
+                    nth = same[:k + 1].count(r[0])
+                    r[0] = f"{r[0]}（{nth}/{same.count(r[0])}）"
+                    numbered = True
+                sub = _lead_subtitle(lines, r[1][0][0], r[1][-1][1]) if numbered and r[0] else None
+                if sub and sub not in r[0]:
+                    r[0] += f"／{sub}"
         for t, rs, how in refined:
             if how:
                 report["oversize_split"][how] += 1
