@@ -69,6 +69,25 @@ class TestEpubSlicing(SliceTestBase):
         self.assertTrue(all(c["split"] == "paragraph" for c in chapters))
         self.assertEqual(report["chapter_chars"] + len(chapters) - 1, report["original_chars"])
 
+    def test_numbered_pieces_take_a_leading_subheading(self):
+        sub = "<p>第二段的小標</p>"
+        body = "<h1>第一章</h1>" + paras(45_000) + sub + paras(45_000)
+        chapters, _ = self.slice([("c1.xhtml", body)], [epub.Link("c1.xhtml", "第一章", "c1")])
+        titles = [c["title"] for c in chapters]
+        self.assertEqual(titles[0], "第一章（1/3）")  # its first line is the chapter's own title
+        self.assertTrue(all(t.startswith(f"第一章（{k}/3）") for k, t in enumerate(titles, 1)))
+
+    def test_lead_subtitle_rules(self):
+        s = slicing._lead_subtitle
+        body = "這是一段很長的正文，用來當作小標後面的內容。"
+        self.assertEqual(s(["上一段結束。", "練習的原則", body], 1, 3), "練習的原則")
+        self.assertEqual(s(["上一段結束。", "第二組練習（進階）", body], 1, 3), "第二組練習（進階）")
+        self.assertIsNone(s(["上一段還沒結束，", "練習的原則", body], 1, 3))  # cut inside a paragraph
+        for line in ("[註12]", "2", "方法如下：", "他停下來，", "「走吧」", "圖3 某某曲線", "書名: 某書",
+                     "這一行太長了不像小標而是一句完整的正文內容會超過上限"):
+            self.assertIsNone(s(["上一段結束。", line, body], 1, 3), line)
+        self.assertIsNone(s(["上一段結束。", "練習的原則"], 1, 2))  # nothing after it
+
     def test_sibling_chapters_in_one_file_are_cut_at_their_anchors(self):
         body = "".join(f'<h2 id="s{i}">第{i}章</h2>' + paras(5000) for i in (1, 2, 3))
         toc = [epub.Link(f"all.xhtml#s{i}", f"第{i}章", f"s{i}") for i in (1, 2, 3)]

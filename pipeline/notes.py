@@ -349,7 +349,7 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     if created:
         print(f"  [concepts]  {created} concept card(s) created")
     if shared:
-        print(f"  [concepts]  {len(shared)} existing card(s) from other books gained this source: "
+        print(f"  [concepts]  {len(shared)} card(s) shared with other books updated: "
               + "、".join(shared))
 
     # 3. Manifest update
@@ -361,41 +361,76 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     return True
 
 
+_TAGGED = re.compile(r"（\[\[([^\]]+)\]\]）\s*$")
+
+
+def _section(text: str, name: str):
+    return re.search(rf"(\n## {name}\n)(.*?)(?=\n## |\Z)", text, re.S)
+
+
+def _put_book_block(text: str, name: str, book: str, first: str, new_block: str) -> str:
+    """In section `name` of a shared card (blocks separated by blank lines,
+    each ending with （[[book]]）), replace `book`'s block with `new_block`,
+    dropping any second block of that book, or append it. An untagged first
+    block belongs to `first` (the card's first source) and gets tagged once
+    the section holds another book's block."""
+    m = _section(text, name)
+    if not m:
+        return text
+    blocks = [b.strip("\n") for b in re.split(r"\n[ \t]*\n", m.group(2).strip("\n")) if b.strip()]
+    owners = [(_TAGGED.search(b).group(1) if _TAGGED.search(b) else (first if i == 0 else None))
+              for i, b in enumerate(blocks)]
+    if book in owners:
+        idx = owners.index(book)
+        blocks[idx] = new_block
+        blocks = [b for i, b in enumerate(blocks) if i == idx or owners[i] != book]
+    else:
+        blocks.append(new_block)
+    if len(blocks) > 1 and not _TAGGED.search(blocks[0]) and first and first != book:
+        blocks[0] += f"（[[{first}]]）" if name == "定義" else f"\n（[[{first}]]）"
+    return text[:m.start(2)] + "\n\n".join(blocks) + "\n" + text[m.end(2):]
+
+
 def _add_source_to_card(path: Path, concept: dict, book_title: str,
                         known_concepts: set[str] | None = None) -> bool:
-    """A card with this title already exists (usually from another book):
-    add this book to source_book, its quote under 原文 tagged with the book,
-    and any new related concepts. The definition stays as the first book
-    wrote it. Returns False when the card already lists this book."""
-    text = path.read_text(encoding="utf-8")
+    """A card with this title already exists, from another book: add this
+    book to source_book, put its definition under 定義 and its quote under
+    原文 (each tagged with the book), and add any new related concepts. When
+    the card already lists this book (the book is being re-run), its earlier
+    definition and quote are replaced, not added again. A card whose only
+    source is this book is left alone. Returns True when the card changed."""
+    text = before = path.read_text(encoding="utf-8")
     sources = card_sources(text)
-    if book_title in sources:
+    if book_title not in sources:
+        sources.append(book_title)
+        block = "source_book:\n" + "".join(f'  - "[[{b}]]"\n' for b in sources)
+        text, n = re.subn(r'^source_book:\s*"\[\[.*?\]\]"[ \t]*\n', lambda m: block, text, count=1, flags=re.M)
+        if not n:
+            text, n = re.subn(r'^source_book:[ \t]*\n(?:[ \t]+-[ \t]*"\[\[.*?\]\]"[ \t]*\n)+', lambda m: block,
+                              text, count=1, flags=re.M)
+        if not n:  # no source_book at all: add it before the closing ---
+            text = re.sub(r"\A(---\n.*?\n)(---\n)", lambda m: m.group(1) + block + m.group(2),
+                          text, count=1, flags=re.S)
+    if len(sources) < 2:
         return False
-    sources.append(book_title)
-    block = "source_book:\n" + "".join(f'  - "[[{b}]]"\n' for b in sources)
-    text, n = re.subn(r'^source_book:\s*"\[\[.*?\]\]"[ \t]*\n', lambda m: block, text, count=1, flags=re.M)
-    if not n:
-        text, n = re.subn(r'^source_book:[ \t]*\n(?:[ \t]+-[ \t]*"\[\[.*?\]\]"[ \t]*\n)+', lambda m: block,
-                          text, count=1, flags=re.M)
-    if not n:  # no source_book at all: add it before the closing ---
-        text = re.sub(r"\A(---\n.*?\n)(---\n)", lambda m: m.group(1) + block + m.group(2),
-                      text, count=1, flags=re.S)
 
+    definition = concept.get("definition", "").strip()
+    if definition:
+        text = _put_book_block(text, "定義", book_title, sources[0], f"{definition}（[[{book_title}]]）")
     quote = concept.get("source_quote", "").strip()
     if quote:
         quote_block = "\n".join(f"> {line}" for line in quote.split("\n"))
-        addition = f"\n{quote_block}\n（[[{book_title}]]）\n"
-        text = re.sub(r"(## 原文\n.*?)(\n## )",
-                      lambda m: m.group(1).rstrip("\n") + "\n" + addition + m.group(2),
-                      text, count=1, flags=re.S)
+        text = _put_book_block(text, "原文", book_title, sources[0], f"{quote_block}\n（[[{book_title}]]）")
 
     existing_links = set(re.findall(r"\[\[(.*?)\]\]", text))
     new_related = []
     for r in concept.get("related_concepts", []):
         safe = _safe_title(r)
-        if safe in existing_links or safe == path.stem:
+        # only names that have a card: a plain-text name on another book's card is clutter
+        if safe in existing_links or safe == path.stem or (known_concepts is not None and safe not in known_concepts):
             continue
-        new_related.append(f"- [[{safe}]]" if known_concepts is None or safe in known_concepts else f"- {r}")
+        if f"- [[{safe}]]" not in new_related:
+            new_related.append(f"- [[{safe}]]")
     if new_related:
         def _extend(m):
             body = m.group(2).rstrip("\n")
@@ -405,6 +440,8 @@ def _add_source_to_card(path: Path, concept: dict, book_title: str,
             return m.group(1) + body + "\n" + m.group(3)
         text = re.sub(r"(## 相關概念\n)(.*?)(\n## )", _extend, text, count=1, flags=re.S)
 
+    if text == before:
+        return False
     path.write_text(text, encoding="utf-8")
     return True
 

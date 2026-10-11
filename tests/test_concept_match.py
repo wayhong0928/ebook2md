@@ -72,24 +72,49 @@ class AddSourceTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_appends_source_quote_and_related_once(self):
-        c = {"title": "延遲滿足", "source_quote": "先忍住，\n之後拿更多。",
-             "related_concepts": ["其他概念", "自我控制"]}
+    def test_second_book_adds_tagged_definition_quote_and_related_once(self):
+        c = {"title": "延遲滿足", "definition": "忍住眼前的小獎勵。", "source_quote": "先忍住，\n之後拿更多。",
+             "related_concepts": ["其他概念", "自我控制", "延遲滿足", "沒有卡的詞"]}
         self.assertTrue(notes._add_source_to_card(self.path, c, "書丁", {"自我控制"}))
         text = self.path.read_text(encoding="utf-8")
         self.assertEqual(concept_match.card_sources(text), ["書乙", "書丁"])
-        self.assertIn("> 先忍住，\n> 之後拿更多。\n（[[書丁]]）", text)
-        self.assertIn("> 等十五分鐘拿兩顆糖。", text)
+        # the first book's untagged paragraph and quote get tagged once another book joins
+        self.assertIn("## 定義\n為了長期報酬放棄眼前獎勵。（[[書乙]]）\n\n忍住眼前的小獎勵。（[[書丁]]）\n", text)
+        self.assertIn("> 等十五分鐘拿兩顆糖。\n（[[書乙]]）\n\n> 先忍住，\n> 之後拿更多。\n（[[書丁]]）", text)
         self.assertEqual(text.count("[[其他概念]]"), 1)
+        self.assertNotIn("- [[延遲滿足]]", text)  # no self-link
+        self.assertNotIn("沒有卡的詞", text)  # no plain-text name on a shared card
         self.assertIn("- [[自我控制]]\n\n## 我的理解", text)
-        self.assertIn("## 定義\n為了長期報酬放棄眼前獎勵。", text)
-        # same book again: no change
-        self.assertFalse(notes._add_source_to_card(self.path, c, "書丁"))
+        # same book, same output again: no change
+        self.assertFalse(notes._add_source_to_card(self.path, c, "書丁", {"自我控制"}))
         self.assertEqual(self.path.read_text(encoding="utf-8"), text)
         # third book extends the list form
         self.assertTrue(notes._add_source_to_card(self.path, {"title": "延遲滿足"}, "書戊"))
         self.assertEqual(concept_match.card_sources(self.path.read_text(encoding="utf-8")),
                          ["書乙", "書丁", "書戊"])
+
+    def test_rerun_replaces_the_books_old_paragraph_and_drops_duplicates(self):
+        notes._add_source_to_card(self.path, {"title": "延遲滿足", "definition": "舊版定義。",
+                                              "source_quote": "舊版引文。"}, "書丁")
+        text = self.path.read_text(encoding="utf-8")
+        # a second paragraph of the same book, as an older tool could leave
+        text = text.replace("舊版定義。（[[書丁]]）", "舊版定義。（[[書丁]]）\n\n更舊的定義。（[[書丁]]）")
+        self.path.write_text(text, encoding="utf-8")
+        new = {"title": "延遲滿足", "definition": "新版定義。", "source_quote": "新版引文。"}
+        self.assertTrue(notes._add_source_to_card(self.path, new, "書丁"))
+        text = self.path.read_text(encoding="utf-8")
+        for gone in ("舊版定義", "更舊的定義", "舊版引文"):
+            self.assertNotIn(gone, text)
+        self.assertIn("新版定義。（[[書丁]]）", text)
+        self.assertIn("> 新版引文。\n（[[書丁]]）", text)
+        self.assertEqual(text.count("（[[書丁]]）"), 2)  # one definition, one quote
+        self.assertIn("為了長期報酬放棄眼前獎勵。（[[書乙]]）", text)  # the other book untouched
+        self.assertIn("> 等十五分鐘拿兩顆糖。\n（[[書乙]]）", text)
+
+    def test_card_of_this_book_only_is_left_alone(self):
+        before = self.path.read_text(encoding="utf-8")
+        self.assertFalse(notes._add_source_to_card(self.path, {"title": "延遲滿足", "definition": "別的。"}, "書乙"))
+        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
 
 
 if __name__ == "__main__":
