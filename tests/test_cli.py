@@ -142,5 +142,33 @@ class NoPersonalPathsTest(unittest.TestCase):
         self.assertEqual(hits, [])
 
 
+class NoLibraryNamesTest(unittest.TestCase):
+    """No title, author or series from the owner's library in tracked files: examples
+    use placeholders such as 作者甲 (a real author and series slipped into a docstring
+    on 2026-09-27 and had to be purged from history). Needs the gitignored manifest,
+    so it only runs on the owner's checkout."""
+
+    def test_tracked_files(self):
+        manifest = ROOT / "pipeline" / "manifest.json"
+        files = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.split("\n")
+        if not manifest.exists() or not files[0]:
+            self.skipTest("needs the owner's manifest and a git checkout")
+        squash = lambda s: re.sub(r"\s+", "", s or "")
+        names = set()
+        for book_id, v in json.loads(manifest.read_text(encoding="utf-8"))["books"].items():
+            for s in (book_id, v.get("author"), v.get("series"), *re.split(r"[、,，/;；&]", v.get("author") or "")):
+                if len(squash(s)) >= 3:
+                    names.add(squash(s))
+        names -= {"UnknownAuthor", "Unknown"}
+        hits = []
+        for f in filter(None, files):
+            p = ROOT / f
+            if p.suffix.lower() not in (".py", ".md", ".txt", ".toml", ".yml", ".json") or not p.exists():
+                continue
+            text = squash(p.read_text(encoding="utf-8", errors="ignore"))
+            hits += [f"{f}: {n}" for n in names if n in text]
+        self.assertEqual(hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()
