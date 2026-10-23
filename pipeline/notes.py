@@ -361,6 +361,23 @@ def apply_notes(results_path: Path = NOTES_RESULTS_FILE) -> bool:
     return True
 
 
+_CJK = re.compile(r"[⺀-〿぀-ヿ㐀-䶿一-鿿豈-﫿︰-﹏＀-￯]")
+
+
+def _quote_block(quote: str) -> str:
+    """A quote as one `> ` line. Hard line breaks copied from the book are
+    joined: directly when both sides are CJK characters or full-width
+    punctuation, with one space otherwise. Blank lines are dropped."""
+    out = ""
+    for line in (l.strip() for l in quote.split("\n")):
+        if not line:
+            continue
+        if out and not (_CJK.match(out[-1]) and _CJK.match(line[0])):
+            out += " "
+        out += line
+    return f"> {out}"
+
+
 _TAGGED = re.compile(r"（\[\[([^\]]+)\]\]）\s*$")
 
 
@@ -419,7 +436,7 @@ def _add_source_to_card(path: Path, concept: dict, book_title: str,
         text = _put_book_block(text, "定義", book_title, sources[0], f"{definition}（[[{book_title}]]）")
     quote = concept.get("source_quote", "").strip()
     if quote:
-        quote_block = "\n".join(f"> {line}" for line in quote.split("\n"))
+        quote_block = _quote_block(quote)
         text = _put_book_block(text, "原文", book_title, sources[0], f"{quote_block}\n（[[{book_title}]]）")
 
     existing_links = set(re.findall(r"\[\[(.*?)\]\]", text))
@@ -559,9 +576,7 @@ def _render_book_notes(entry: dict, classification: dict, chapters: list[dict], 
     all_concepts: list[str] = []
     for ch in chapters:
         quotes_raw = ch.get("key_quotes", [])
-        quotes = "\n".join(
-            "\n".join(f"> {line}" for line in q.split("\n")) for q in quotes_raw
-        )
+        quotes = "\n".join(_quote_block(q) for q in quotes_raw)
         concepts_raw = ch.get("key_concepts", [])
         concepts = "\n".join(f"- {_link_or_plain(c)}" for c in concepts_raw)
         chapter_sections.append(
@@ -611,7 +626,7 @@ def _render_concept_card(concept: dict, book_id: str, known_concepts: set[str] |
     title = concept.get("title", "")
     definition = concept.get("definition", "")
     source_quote = concept.get("source_quote", "")
-    quote_block = "\n".join(f"> {line}" for line in source_quote.split("\n"))
+    quote_block = _quote_block(source_quote)
     related_raw = concept.get("related_concepts", [])
     related = "\n".join(
         f"- [[{_safe_title(r)}]]" if known_concepts is None or _safe_title(r) in known_concepts else f"- {r}"

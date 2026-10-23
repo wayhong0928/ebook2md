@@ -80,7 +80,7 @@ class AddSourceTest(unittest.TestCase):
         self.assertEqual(concept_match.card_sources(text), ["書乙", "書丁"])
         # the first book's untagged paragraph and quote get tagged once another book joins
         self.assertIn("## 定義\n為了長期報酬放棄眼前獎勵。（[[書乙]]）\n\n忍住眼前的小獎勵。（[[書丁]]）\n", text)
-        self.assertIn("> 等十五分鐘拿兩顆糖。\n（[[書乙]]）\n\n> 先忍住，\n> 之後拿更多。\n（[[書丁]]）", text)
+        self.assertIn("> 等十五分鐘拿兩顆糖。\n（[[書乙]]）\n\n> 先忍住，之後拿更多。\n（[[書丁]]）", text)
         self.assertEqual(text.count("[[其他概念]]"), 1)
         self.assertNotIn("- [[延遲滿足]]", text)  # no self-link
         self.assertNotIn("沒有卡的詞", text)  # no plain-text name on a shared card
@@ -110,6 +110,17 @@ class AddSourceTest(unittest.TestCase):
         self.assertEqual(text.count("（[[書丁]]）"), 2)  # one definition, one quote
         self.assertIn("為了長期報酬放棄眼前獎勵。（[[書乙]]）", text)  # the other book untouched
         self.assertIn("> 等十五分鐘拿兩顆糖。\n（[[書乙]]）", text)
+
+    def test_card_with_bom_is_updated_like_any_other(self):
+        # 10-13《系統之美》的舊卡帶 BOM，night_run 的判斷因此失敗；apply-notes 這邊要照常更新、BOM 不動
+        self.path.write_text("﻿" + self.path.read_text(encoding="utf-8"), encoding="utf-8")
+        c = {"title": "延遲滿足", "definition": "忍住眼前的小獎勵。", "source_quote": "先忍住，之後拿更多。"}
+        self.assertTrue(notes._add_source_to_card(self.path, c, "書丁"))
+        text = self.path.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("﻿---\n"))
+        self.assertEqual(concept_match.card_sources(text), ["書乙", "書丁"])
+        self.assertIn("忍住眼前的小獎勵。（[[書丁]]）", text)
+        self.assertIn("> 先忍住，之後拿更多。\n（[[書丁]]）", text)
 
     def test_card_of_this_book_only_is_left_alone(self):
         before = self.path.read_text(encoding="utf-8")

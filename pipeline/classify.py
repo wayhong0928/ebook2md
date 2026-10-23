@@ -161,6 +161,13 @@ def apply_batch(results_path: Path = RESULTS_FILE) -> dict[str, dict]:
 
     manifest = load_manifest()
     classifications = {}
+    # Count the batch's own author/series too: the loop below only writes them to disk,
+    # so 36 books by one author arriving together all came out needs_subfolder=false (2026-10-18).
+    for item in results:
+        entry = manifest["books"].get(item.get("book_id"))
+        if isinstance(entry, dict):
+            entry["series"] = item.get("series", "")
+            entry["author"] = item.get("author", "")
 
     for item in results:
         book_id = item.get("book_id")

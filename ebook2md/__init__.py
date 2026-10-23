@@ -11,7 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
-__version__ = "1.7.1"
+__version__ = "1.7.2"
 
 
 @functools.lru_cache(maxsize=None)
